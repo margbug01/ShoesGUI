@@ -22,8 +22,9 @@ type application struct {
 	importTarget   string
 	importNew      bool
 	importNewName  string
-	fetching       bool // 正在拉订阅（更新订阅）
-	parsing        bool // 粘贴导入正在识别（订阅地址要联网）
+	fetching       bool   // 正在拉订阅（更新订阅）
+	parsing        bool   // 粘贴导入正在识别（订阅地址要联网）
+	lastImport     string // 这次打开 Shoes 后最后导入的内容，剪贴板还是它就不再预填
 	notice         string
 	noticeUntil    time.Time
 	addingGroup    bool

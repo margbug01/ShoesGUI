@@ -317,3 +317,83 @@ func TestSubscriptionSuggestsItsOwnGroup(t *testing.T) {
 		t.Fatal("an empty group can hold the subscription")
 	}
 }
+
+// 机场面板按 UA 回格式：不认得的回 Clash YAML，v2rayN 回分享链接。YAML 里的 DNS、规则网址不能被当成 HTTP 节点
+func TestSubscriptionAsksForShareLinks(t *testing.T) {
+	yaml := "mixed-port: 7890\ndns:\n  nameserver:\n    - https://223.5.5.5/dns-query\n    - https://1.1.1.1/dns-query\nproxies:\n  - {name: a, type: vless}\nrule-providers:\n  cn: {url: https://testingcf.jsdelivr.net/gh/x/cn.yaml}\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.UserAgent(), "v2rayN") {
+			fmt.Fprint(w, "anytls://test-only@example.com:443#A\n\nvless://"+importUUID+"@example.com:443?security=tls#B\n")
+			return
+		}
+		fmt.Fprint(w, yaml)
+	}))
+	defer server.Close()
+	result := loadImport(server.URL + "/api/subscript/every/x/y")
+	if len(result.Nodes) != 2 || len(result.Issues) != 0 {
+		t.Fatalf("got %d nodes, issues %v", len(result.Nodes), result.Issues)
+	}
+	pasted := parseImport(yaml)
+	if len(pasted.Nodes) != 0 || len(pasted.Issues) != 1 || !strings.Contains(pasted.Issues[0], "Clash") {
+		t.Fatalf("pasted clash yaml: %d nodes, %v", len(pasted.Nodes), pasted.Issues)
+	}
+	for _, link := range []string{"https://223.5.5.5/dns-query", "https://dns.google", "http://example.com/x?y=1"} {
+		if _, err := parseLink(link); err == nil {
+			t.Errorf("%s accepted as a proxy", link)
+		}
+	}
+	if _, err := parseLink("https://u:p@proxy.example.com:8443#p"); err != nil {
+		t.Fatal("real https proxy link rejected:", err)
+	}
+}
+
+func TestImportPrefillSkipsWhatIsAlreadyIn(t *testing.T) {
+	saved := readClipboard
+	defer func() { readClipboard = saved }()
+	link := "trojan://test-only@example.com:443#Test"
+	a := &application{settings: defaultSettings(), nodeGroup: "全部"}
+	a.settings.Subscriptions = map[string]string{"机场": "https://sub.example.com/a"}
+	a.settings.Nodes = parseImport(link).Nodes
+	for clip, want := range map[string]string{
+		"https://sub.example.com/a":  "",
+		" https://sub.example.com/a": "",
+		"https://sub.example.com/b":  "https://sub.example.com/b",
+		link:                         "",
+		"socks5://new.example:1080":  "socks5://new.example:1080",
+	} {
+		readClipboard = func() string { return clip }
+		a.openImport()
+		if a.importText != want {
+			t.Errorf("clipboard %q: prefilled %q", clip, a.importText)
+		}
+	}
+	a.lastImport = "socks5://new.example:1080"
+	readClipboard = func() string { return "socks5://new.example:1080" }
+	a.openImport()
+	if a.importText != "" {
+		t.Fatal("just-imported text prefilled again")
+	}
+}
+
+// 订阅绑到新分组时不跟别的分组去重：和手动导过的同一家机场撞上，也要整份进来
+func TestBoundSubscriptionIsComplete(t *testing.T) {
+	dir := t.TempDir()
+	nodes := parseImport("trojan://a@example.com:443#一\ntrojan://b@example.com:443#二").Nodes
+	a := &application{settings: defaultSettings(), storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), engine: newEngine(dir), nodeGroup: "全部"}
+	a.settings.Nodes = []Node{nodes[0]}
+	a.settings.Nodes[0].Group = "快车"
+	a.settings.Selected = 0
+	a.importing, a.importText, a.importParsed = true, "https://sub.example/x", "https://sub.example/x"
+	a.importResult = importResult{Nodes: nodes, Source: "https://sub.example/x"}
+	a.importNew, a.importNewName = true, "机场"
+	a.finishImport()
+	in := 0
+	for _, n := range a.settings.Nodes {
+		if n.Group == "机场" && n.FromSub {
+			in++
+		}
+	}
+	if in != 2 || len(a.settings.Nodes) != 3 || a.settings.Selected != 0 || a.lastImport != "https://sub.example/x" {
+		t.Fatalf("group has %d of 2, total %d, selected %d", in, len(a.settings.Nodes), a.settings.Selected)
+	}
+}

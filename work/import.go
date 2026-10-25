@@ -38,6 +38,9 @@ func parseImport(text string) importResult {
 			text = strings.TrimSpace(strings.TrimPrefix(string(data), "\ufeff"))
 		}
 	}
+	if format := configFormat(text); format != "" {
+		return importResult{Issues: []string{"这是一整份" + format + "，暂不支持；请用 v2rayN 格式的分享链接或订阅"}}
+	}
 	result := importResult{}
 	for index, line := range strings.Fields(text) {
 		node, err := parseLink(line)
@@ -51,6 +54,21 @@ func parseImport(text string) importResult {
 		result.Issues = []string{"请粘贴节点链接或订阅内容"}
 	}
 	return result
+}
+
+// subscriptionUA 机场面板按 User-Agent 决定回什么格式，不认得的多半当 Clash 回 YAML。
+// 我们解析的是 v2rayN 那种分享链接，所以照它的样子报；有的面板只看开头是不是 v2rayN，后缀放自己的名字
+const subscriptionUA = "v2rayN/7.13.8 ShoesGUI/0.1"
+
+// configFormat 认出整份配置文件（Clash YAML、JSON），这种不是链接列表，别把里面的网址当节点
+func configFormat(text string) string {
+	switch {
+	case strings.HasPrefix(text, "proxies:") || strings.Contains(text, "\nproxies:"):
+		return "Clash 配置（YAML）"
+	case strings.HasPrefix(text, "{") || strings.HasPrefix(text, "["):
+		return "JSON 配置"
+	}
+	return ""
 }
 
 // subscriptionURL 认出订阅地址：http(s)、不带账号、只有一行。只有主机加端口的当成 HTTP 代理链接
@@ -69,7 +87,7 @@ func loadImport(text string) importResult {
 		if err != nil {
 			return importResult{Issues: []string{"订阅地址无效"}}
 		}
-		request.Header.Set("User-Agent", "ShoesGUI/0.1")
+		request.Header.Set("User-Agent", subscriptionUA)
 		response, err := http.DefaultClient.Do(request)
 		if err != nil {
 			return importResult{Issues: []string{"无法读取订阅，请检查地址和网络"}}
@@ -132,6 +150,10 @@ func parseLink(link string) (Node, error) {
 		node.Username = parsed.User.Username()
 		node.Password, _ = parsed.User.Password()
 	case "http", "https":
+		// 代理链接是 http://账号@主机:端口；带路径、参数或没写端口的是普通网址（比如配置里的 DNS、规则地址）
+		if (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Port() == "" {
+			return Node{}, errors.New("这是网址，不是代理链接")
+		}
 		node.Kind = "HTTP"
 		node.Username = parsed.User.Username()
 		node.Password, _ = parsed.User.Password()

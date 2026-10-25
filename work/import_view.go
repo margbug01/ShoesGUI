@@ -198,17 +198,19 @@ func (a *application) finishImport() {
 	if source != "" && a.settings.Subscriptions[target] == source {
 		// 同一个订阅再导一次就是更新，不然换了密码的节点会再加一份、旧的留着
 		if a.applySync(target, result) {
+			a.lastImport = strings.TrimSpace(a.importText)
 			a.closeImport()
 		}
 		return
 	}
 	// 订阅只绑到空分组，免得订阅节点和原来手动加的混在一组、重名分不清
 	bind := source != "" && groupCounts(a.settings)[name] == 0
-	next, added := importBatch(a.settings, result.Nodes, target)
+	var next Settings
+	var added int
 	if bind {
-		for i := len(a.settings.Nodes); i < len(next.Nodes); i++ {
-			next.Nodes[i].FromSub = true
-		}
+		// 订阅自己一组、由订阅管，和「更新订阅」走同一套：不跟别的分组去重，不然和手动导过的同一家机场
+		// 撞上就只进来一部分，下次更新又全补上
+		next, added, _, _ = syncGroup(a.settings, target, result.Nodes)
 		next.Subscriptions = maps.Clone(next.Subscriptions)
 		if next.Subscriptions == nil {
 			next.Subscriptions = map[string]string{}
@@ -217,15 +219,21 @@ func (a *application) finishImport() {
 		if target != "" && !slices.Contains(next.Groups, target) {
 			next.Groups = append(append([]string(nil), next.Groups...), target)
 		}
+	} else {
+		next, added = importBatch(a.settings, result.Nodes, target)
 	}
 	if (added > 0 || bind) && !a.commit(next) {
 		return
 	}
 	skipped := len(result.Nodes) - added
 	text := fmt.Sprintf("%d 个节点已存在，没有重复导入", skipped)
-	if added > 0 {
+	switch {
+	case added > 0 && skipped > 0:
 		text = fmt.Sprintf("已导入 %d 个至「%s」，跳过 %d 个重复节点", added, name, skipped)
+	case added > 0:
+		text = fmt.Sprintf("已导入 %d 个至「%s」", added, name)
 	}
+	a.lastImport = strings.TrimSpace(a.importText)
 	switch {
 	case bind:
 		text += "。以后在这个分组里点「更新订阅」就能同步"
@@ -300,11 +308,29 @@ func (a *application) openImport() {
 	a.importText = ""
 	a.importParsed = ""
 	a.importResult = importResult{}
-	if text := readClipboard(); importable(text) {
+	if text := readClipboard(); importable(text) && !a.alreadyImported(text) {
 		a.importText = text
 	}
 	a.importObserved = a.importText
 	a.importChanged = time.Now()
+}
+
+// alreadyImported 剪贴板里的东西已经导入过：刚导过的、已经绑了分组的订阅、链接全都在的。
+// 这种打开导入页就不再自动填，要更新订阅点分组里的「更新订阅」，或者手动点粘贴
+func (a *application) alreadyImported(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == a.lastImport {
+		return true
+	}
+	if subscriptionURL(text) {
+		return slices.Contains(slices.Collect(maps.Values(a.settings.Subscriptions)), text)
+	}
+	nodes := parseImport(text).Nodes
+	if len(nodes) == 0 {
+		return false
+	}
+	_, added := mergeNodes(a.settings, nodes)
+	return added == 0
 }
 
 // linkSchemes 认得的节点链接开头（不支持的也算，好在预览里说清楚为什么不行）
