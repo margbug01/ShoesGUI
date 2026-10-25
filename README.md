@@ -8,7 +8,7 @@
 
 给 [shoes](https://github.com/cfal/shoes) 内核做的原生图形界面：订阅一键更新、v2rayN 同款测速、规则分流、托盘常驻。
 
-![Windows 10 / 11](https://img.shields.io/badge/Windows-10%20%2F%2011-23272e?style=flat-square&logo=windows&logoColor=white) ![Go 1.27](https://img.shields.io/badge/Go-1.27-23272e?style=flat-square&logo=go&logoColor=white) ![shoes 0.3.4](https://img.shields.io/badge/kernel-shoes%200.3.4-4f8a6c?style=flat-square) ![MyGo](https://img.shields.io/badge/UI-MyGo-6a717c?style=flat-square)
+![Windows 10 / 11](https://img.shields.io/badge/Windows-10%20%2F%2011-23272e?style=flat-square&logo=windows&logoColor=white) ![Go 1.27](https://img.shields.io/badge/Go-1.27-23272e?style=flat-square&logo=go&logoColor=white) ![shoes 0.3.4](https://img.shields.io/badge/kernel-shoes%200.3.4-4f8a6c?style=flat-square) ![MyGo](https://img.shields.io/badge/UI-MyGo-6a717c?style=flat-square) ![GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-4f8a6c?style=flat-square)
 
 <img src="docs/screenshots/hero.webp" width="860" alt="仪表盘，浅色和深色">
 
@@ -137,4 +137,6 @@ docs/              图标母版和 README 截图
 - MiSans：界面字体
 - 交互参考了 [FlClash](https://github.com/chen08209/FlClash) 和 [v2rayN](https://github.com/2dust/v2rayN)
 
-第三方许可证都在 [`outputs/licenses/`](outputs/licenses/)。
+## 许可证
+
+Shoes 以 [GPL-3.0](LICENSE) 发布，和内置的国内规则数据是同一个许可：可以自由使用、修改和再发布，再发布时也要同样开源。随附的 shoes 内核、MyGo、MiSans 字体等第三方组件按各自的许可证分发，原文都在 [`outputs/licenses/`](outputs/licenses/)。
