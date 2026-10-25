@@ -215,7 +215,7 @@ func runState(status string, ready, proxy, hasNodes bool, since, now time.Time) 
 	case ready:
 		return "未启动", false
 	case status == "启动失败" || status == "内核已退出":
-		return status + "，详情看日志", true
+		return status + "，点这里看日志", true
 	}
 	return status, false
 }
@@ -267,10 +267,11 @@ func card(c *ui.Context, title string, span int, aside, body func()) {
 	})
 }
 
-// dashboardView 对齐 FlClash 的仪表盘：网速、当前节点、出站模式、网络接管、出口 IP、流量
+// dashboardView 对齐 FlClash 的仪表盘：网速和流量、当前节点、出站模式、出口 IP（含系统代理接管状态）。
+// 启动/停止只有右上角一个按钮
 func (a *application) dashboardView(c *ui.Context, ready, proxy, busy bool) {
 	gen, _, port := a.engine.runInfo()
-	if key := fmt.Sprintf("%d/%d", gen, a.dash.route); ready && !a.dash.checking && key != a.dash.exitKey {
+	if key := fmt.Sprintf("%d/%d", gen, a.dash.route); ready && proxy && !a.dash.checking && key != a.dash.exitKey {
 		a.checkExit(key, port)
 	}
 	grid := ui.Grid(c.Key("dashboard")).FillWidth().Gap(12)
@@ -282,8 +283,7 @@ func (a *application) dashboardView(c *ui.Context, ready, proxy, busy bool) {
 		a.speedCard(c, ready)
 		a.nodeCard(c)
 		a.modeCard(c)
-		a.takeoverCard(c, proxy, busy)
-		a.exitCard(c, ready)
+		a.exitCard(c, ready, proxy)
 	})
 }
 
@@ -364,16 +364,11 @@ func drawSpeeds(p *ui.Painter, r ui.Rect, speeds []rate, t *ui.Theme) {
 func (a *application) nodeCard(c *ui.Context) {
 	t := c.Theme()
 	node, ok := a.selectedNode()
-	card(c, "当前节点 · "+groupSelect, 0, nil, func() {
+	card(c, "当前节点", 0, nil, func() {
 		if !ok {
 			ui.Text(c, "还没有节点").FontSize(15).FontWeight(600)
-			ui.Text(c, "在「代理」里添加或粘贴导入").FontSize(12).TextColor(t.TextMuted)
-			ui.Row(c).Padding(4, 0, 0, 0).Children(func() {
-				if ui.Button(c.Key("dash-add"), "添加节点").Clicked() {
-					a.tab = "代理"
-					a.beginEdit(-1)
-				}
-			})
+			ui.Text(c, "有订阅链接就直接粘贴导入").FontSize(12).TextColor(t.TextMuted)
+			a.addButtons(c, "dash")
 			return
 		}
 		name := kernelNames(a.settings.Nodes)[a.settings.Selected]
@@ -385,11 +380,26 @@ func (a *application) nodeCard(c *ui.Context) {
 		ui.Row(c).Gap(8).Padding(4, 0, 0, 0).Children(func() {
 			if ui.Button(c.Key("dash-pick"), "切换节点").Clicked() {
 				a.tab, a.editing, a.importing = "代理", false, false
+				a.nodeGroup, a.nodeSearch, a.revealSelected = nodeGroupName(node), "", true
 			}
 			if ui.Button(c.Key("dash-test"), "测速").Disabled(a.testing).Clicked() {
 				a.testNodes([]int{a.settings.Selected}, false)
 			}
 		})
+	})
+}
+
+// addButtons 没有节点时的两个入口。大多数人手里是订阅，所以粘贴导入是主按钮
+func (a *application) addButtons(c *ui.Context, key string) {
+	ui.Row(c).Gap(8).Padding(4, 0, 0, 0).Children(func() {
+		if ui.PrimaryButton(c.Key(key+"-import"), "粘贴导入").Clicked() {
+			a.tab = "代理"
+			a.openImport()
+		}
+		if ui.Button(c.Key(key+"-add"), "手动添加").Clicked() {
+			a.tab = "代理"
+			a.beginEdit(-1)
+		}
 	})
 }
 
@@ -418,34 +428,12 @@ func (a *application) modeCard(c *ui.Context) {
 	})
 }
 
-// switchRow 标题、说明加右边一个开关
-func switchRow(c *ui.Context, key, title, hint string, on *bool, disabled bool) {
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
-			ui.Text(c, title).FontSize(13)
-			ui.Text(c, hint).FontSize(11).TextColor(c.Theme().TextMuted)
-		})
-		ui.Switch(c.Key(key), on).Disabled(disabled)
-	})
-}
-
-func (a *application) takeoverCard(c *ui.Context, proxy, busy bool) {
-	card(c, "网络接管", 0, nil, func() {
-		p, _, changed := a.proxyPick.bind(proxy)
-		switchRow(c, "system-proxy", "系统代理", "127.0.0.1:"+a.settings.Port+"，局域网和本机不走代理", p, busy || len(a.settings.Nodes) == 0)
-		if changed {
-			a.toggleConnect()
-		}
-		off := false
-		switchRow(c, "tun", "TUN", "shoes 内核在 Windows 上还不支持", &off, true)
-	})
-}
-
-func (a *application) exitCard(c *ui.Context, ready bool) {
+// exitCard 浏览器现在从哪出去。没接管系统代理时浏览器是直连的，就照实说，不拿经本地端口查到的节点出口充数
+func (a *application) exitCard(c *ui.Context, ready, proxy bool) {
 	t := c.Theme()
 	d := a.dash
-	card(c, "出口 IP", 0, func() {
-		button := ui.ButtonBase(c.Key("exit-refresh")).Size(22, 22).Center().Radius(6).Label("重新检测").Tooltip("重新检测").Disabled(d.checking || !ready).Cursor(ui.CursorPointer)
+	card(c, "出口 IP", -1, func() {
+		button := ui.ButtonBase(c.Key("exit-refresh")).Size(22, 22).Center().Radius(6).Label("重新检测").Tooltip("重新检测").Disabled(d.checking || !ready || !proxy).Cursor(ui.CursorPointer)
 		if button.Hovered() {
 			button.Background(t.SurfaceHover)
 		}
@@ -454,9 +442,12 @@ func (a *application) exitCard(c *ui.Context, ready bool) {
 		}
 	}, func() {
 		big, small, smallColor := d.exit.IP, d.exit.Place, t.TextMuted
+		via := d.exit.Via
 		switch {
 		case !ready:
-			big, small = "—", "内核没有就绪"
+			big, small, via = "—", "内核没有就绪", ""
+		case !proxy:
+			big, small, via = "未接管系统代理", "浏览器现在是直连的，点右上角「启动」后才走节点", ""
 		case d.checking:
 			big, small = "检测中…", ""
 		case d.exit.Err != "":
@@ -466,8 +457,11 @@ func (a *application) exitCard(c *ui.Context, ready bool) {
 		if small != "" {
 			ui.Text(c, small).FontSize(12).TextColor(smallColor).SingleLine()
 		}
-		if ready && d.exit.Via != "" {
-			ui.Text(c, d.exit.Via).FontSize(12).TextColor(t.TextMuted).SingleLine()
+		if via != "" {
+			ui.Text(c, via).FontSize(12).TextColor(t.TextMuted).SingleLine()
+		}
+		if proxy {
+			ui.Text(c, "已接管系统代理 127.0.0.1:"+a.settings.Port+"，局域网和本机不走代理").FontSize(11).TextColor(t.TextMuted).SingleLine()
 		}
 	})
 }
@@ -477,11 +471,16 @@ func (a *application) dashboardHeader(c *ui.Context, status string, ready, proxy
 	_, since, _ := a.engine.runInfo()
 	hasNodes := len(a.settings.Nodes) > 0
 	text, bad := runState(status, ready, proxy, hasNodes, since, time.Now())
-	color := c.Theme().TextMuted
 	if bad {
-		color = c.Theme().Danger
+		// 报错让人去看日志，那就直接能点过去
+		link := ui.ButtonBase(c.Key("open-logs")).Padding(0, 12).Label(text).Tooltip("打开日志").Cursor(ui.CursorPointer)
+		link.Children(func() { ui.Text(c, text).FontSize(13).TextColor(c.Theme().Danger).Underline().SingleLine() })
+		if link.Clicked() {
+			a.tab = "日志"
+		}
+	} else {
+		ui.Text(c, text).FontSize(13).TextColor(c.Theme().TextMuted).SingleLine().FontFeatures("tnum").Padding(0, 12)
 	}
-	ui.Text(c, text).FontSize(13).TextColor(color).SingleLine().FontFeatures("tnum").Padding(0, 12)
 	label := "启动"
 	if busy {
 		label = "处理中…"

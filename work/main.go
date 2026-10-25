@@ -31,6 +31,7 @@ type application struct {
 	groupError        string
 	nodeGroup         string
 	nodeSearch        string
+	revealSelected    bool // 下一帧把正在用的节点卡片滚进视野（仪表盘「切换节点」过来时）
 	advanced          bool
 	settings          Settings
 	engine            *engine
@@ -58,7 +59,6 @@ type application struct {
 	// 下面这些是控件的跨帧绑定，见 choice
 	themePick, modePick     choice[int]
 	loginPick, autoPick     choice[bool]
-	proxyPick               choice[bool]
 	securityPick, extraPick choice[string]
 	logPick                 choice[int]
 	logFilter               int         // 0 全部，1 只看重要（藏起连接异常）

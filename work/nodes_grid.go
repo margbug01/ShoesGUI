@@ -175,11 +175,14 @@ func (a *application) nodeGrid(c *ui.Context) {
 	}
 	indices := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 	if len(indices) == 0 {
-		text := "没有匹配的节点"
 		if len(a.settings.Nodes) == 0 {
-			text = "还没有节点，点右上角 ＋ 添加"
+			ui.Column(c).Padding(16, 0).Gap(6).Children(func() {
+				ui.Text(c, "还没有节点").FontSize(13).TextColor(c.Theme().TextMuted)
+				a.addButtons(c, "grid")
+			})
+			return
 		}
-		ui.Text(c, text).FontSize(13).TextColor(c.Theme().TextMuted).Padding(16, 0)
+		ui.Text(c, "没有匹配的节点").FontSize(13).TextColor(c.Theme().TextMuted).Padding(16, 0)
 		return
 	}
 	names := kernelNames(a.settings.Nodes)
@@ -211,6 +214,10 @@ func (a *application) nodeGrid(c *ui.Context) {
 			card.Background(background).Border(1, c.Theme().Border)
 			if selected {
 				card.Border(2, c.Theme().Accent)
+				if a.revealSelected {
+					card.ScrollIntoView()
+					a.revealSelected = false
+				}
 			}
 			menu := func(m *ui.Menu) {
 				if m.Item("真连接延迟").Disabled(a.testing).Chosen() {

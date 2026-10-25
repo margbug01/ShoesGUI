@@ -1,8 +1,11 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestTrafficSurvivesKernelRestart(t *testing.T) {
@@ -54,10 +57,43 @@ func TestRunState(t *testing.T) {
 	if text, _ := runState("就绪", true, false, true, time.Time{}, now); text != "未启动" {
 		t.Fatal(text)
 	}
-	if text, bad := runState("启动失败", false, false, true, time.Time{}, now); !bad || text != "启动失败，详情看日志" {
+	if text, bad := runState("启动失败", false, false, true, time.Time{}, now); !bad || text != "启动失败，点这里看日志" {
 		t.Fatal(text)
 	}
 	if text, _ := runState("未连接", false, false, false, time.Time{}, now); text != "还没有节点" {
 		t.Fatal(text)
+	}
+}
+
+func TestDashboardTellsTheTruth(t *testing.T) {
+	saved := readClipboard
+	readClipboard = func() string { return "" }
+	defer func() { readClipboard = saved }()
+	dir := t.TempDir()
+	a := &application{settings: defaultSettings(), engine: newEngine(dir), tab: "仪表盘", storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), delays: map[string]int{}, nodeGroup: "全部"}
+	tester := ui.NewTester(a.view, 820, 1000)
+	tester.Frame()
+	if err := tester.Click("粘贴导入"); err != nil {
+		t.Fatal("empty dashboard should offer paste import:", err)
+	}
+	tester.Frame()
+	if a.tab != "代理" || !a.importing {
+		t.Fatal("paste import did not open")
+	}
+	a.importing, a.tab = false, "仪表盘"
+	a.settings.Nodes, a.settings.Selected = []Node{sampleNode("Trojan")}, 0
+	a.engine.mu.Lock()
+	a.engine.ready = true
+	a.engine.mu.Unlock()
+	tester.Frame()
+	tester.Frame()
+	if _, ok := tester.Find("未接管系统代理"); !ok {
+		t.Fatal("exit card must say the browser is direct while not taken over")
+	}
+	if _, ok := tester.Find("TUN"); ok {
+		t.Fatal("the always-off TUN switch is back")
+	}
+	if a.dash.checking {
+		t.Fatal("exit lookup started without system proxy")
 	}
 }

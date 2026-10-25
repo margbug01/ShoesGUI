@@ -269,7 +269,7 @@ func (a *application) openImport() {
 	a.importText = ""
 	a.importParsed = ""
 	a.importResult = importResult{}
-	a.importText = mygo.Clipboard.ReadText()
+	a.importText = readClipboard()
 	a.importObserved = a.importText
 	a.importChanged = time.Now()
 }
@@ -310,7 +310,7 @@ func (a *application) importView(c *ui.Context) {
 	ui.Row(c).FillWidth().Padding(8, 0).Gap(8).Children(func() {
 		ui.Spacer(c)
 		if iconButton(c.Key("paste-again"), pasteIcon, "粘贴", false, a.busy.Load()).Clicked() {
-			a.importText = mygo.Clipboard.ReadText()
+			a.importText = readClipboard()
 			a.importParsed = ""
 			a.importResult = importResult{}
 		}
@@ -355,3 +355,6 @@ func (a *application) importView(c *ui.Context) {
 		}
 	})
 }
+
+// readClipboard 测试里换掉：离屏测试没有主循环，读剪贴板会一直等主线程
+var readClipboard = func() string { return mygo.Clipboard.ReadText() }
