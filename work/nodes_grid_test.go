@@ -239,3 +239,28 @@ func TestNewNodeDoesNotStealSelection(t *testing.T) {
 		t.Fatalf("nodes %d, selected %d", len(a.settings.Nodes), a.settings.Selected)
 	}
 }
+
+// 在分组标签上「连节点一起删」：删完这一帧后面还在用删之前算好的下标画卡片，不能越界
+func TestDeleteGroupWithNodesWhileShowingIt(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), settings: defaultSettings(), engine: newEngine(dir), delays: map[string]int{}}
+	for i := 0; i < 6; i++ {
+		n := sampleNode("Trojan")
+		n.Name, n.Group = fmt.Sprintf("快车 %d", i), "快车"
+		if i < 2 {
+			n.Group = "uzi"
+		}
+		a.settings.Nodes = append(a.settings.Nodes, n)
+	}
+	a.settings.Selected, a.nodeGroup, a.groupDelete = 5, "快车", "快车"
+	tester := ui.NewTester(func(c *ui.Context) { ui.Column(c).Fill().Children(func() { a.nodeGrid(c) }) }, 820, 1000)
+	tester.Frame()
+	if err := tester.Click("连节点一起删"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	tester.Frame()
+	if len(a.settings.Nodes) != 2 || a.nodeGroup != "全部" || a.settings.Selected != 0 {
+		t.Fatalf("nodes %d, group %q, selected %d", len(a.settings.Nodes), a.nodeGroup, a.settings.Selected)
+	}
+}

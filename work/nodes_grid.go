@@ -347,6 +347,8 @@ func (a *application) nodeGrid(c *ui.Context) {
 		}
 	})
 	a.groupTabs(c, groups, counts)
+	// 分组标签上能连节点一起删分组，节点列表可能这一帧刚变短；下面画卡片要按现在的重新算，拿上面的下标会越界崩掉
+	names, indices = kernelNames(a.settings.Nodes), visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 	if group, ok := groupKey(a.nodeGroup); ok {
 		if source, ok := a.settings.Subscriptions[group]; ok {
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(0, 0, 8, 0).Children(func() {
