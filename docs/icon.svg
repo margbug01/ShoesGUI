@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Shoes：一条 S 形的路，右上起点，左下绿点是目的地 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b424c"/>
+      <stop offset="1" stop-color="#191c21"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".16"/>
+      <stop offset=".5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d7dde5"/>
+    </linearGradient>
+    <linearGradient id="sage" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7fb796"/>
+      <stop offset="1" stop-color="#4f8a6c"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="216" fill="url(#bg)"/>
+  <rect x="48" y="48" width="928" height="928" rx="216" fill="url(#sheen)"/>
+  <rect x="49.5" y="49.5" width="925" height="925" rx="214.5" fill="none" stroke="#ffffff" stroke-opacity=".08" stroke-width="3"/>
+  <path d="M704 296 C540 236 300 280 318 428 C336 566 706 476 706 626 C706 766 470 778 322 722" fill="none" stroke="#0b0d10" stroke-opacity=".45" stroke-width="156" stroke-linecap="round" transform="translate(0 18)"/>
+  <path d="M704 296 C540 236 300 280 318 428 C336 566 706 476 706 626 C706 766 470 778 322 722" fill="none" stroke="url(#road)" stroke-width="150" stroke-linecap="round"/>
+  <path d="M704 296 C540 236 300 280 318 428 C336 566 706 476 706 626 C706 766 470 778 322 722" fill="none" stroke="#3a424c" stroke-width="12" stroke-linecap="round" stroke-dasharray="34 46" stroke-dashoffset="-20"/>
+  <circle cx="704" cy="296" r="24" fill="#3a424c"/>
+  <circle cx="322" cy="722" r="92" fill="#7fb796" opacity=".18"/>
+  <circle cx="322" cy="722" r="56" fill="url(#sage)" stroke="#1b1f24" stroke-width="16"/>
+</svg>

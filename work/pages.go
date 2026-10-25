@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 	"time"
@@ -8,6 +9,18 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
+
+//go:embed resources/logo.png
+var logoPNG []byte
+
+// logo 侧栏左上角的应用图标，96px 的图显示成 28，高分屏也清楚
+var logo = func() *ui.Bitmap {
+	b, err := ui.DecodeBitmap(logoPNG)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}()
 
 var navIcons = []*ui.SVG{
 	ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16a7.5 7.5 0 1 1 15 0M12 16l3.5-4"/><circle cx="12" cy="16" r="1"/></svg>`)),
@@ -121,7 +134,7 @@ func (a *application) view(c *ui.Context) {
 			p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y, W: 1, H: r.H}, paneBorder(&theme), 0)
 		}).Children(func() {
 			ui.Row(c).Padding(22, 20, 20, 20).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Box(c).Size(28, 28).Radius(9).Background(theme.Accent).Center().Children(func() { ui.Text(c, "S").FontSize(17).FontWeight(600).TextColor(theme.AccentText) })
+				ui.Image(c, logo).Size(28, 28)
 				ui.Text(c, "Shoes").FontSize(15).FontWeight(600)
 			}).DragWindow()
 			ui.Sidebar(c, &a.tab, func() {
