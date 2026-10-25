@@ -48,6 +48,10 @@ type application struct {
 	settingsPath      string
 	kernelDraft       string
 	portDraft         string
+	kernelError       string
+	portError         string
+	kernelFocus       bool // 上一帧输入框有没有焦点，失焦就保存
+	portFocus         bool
 	delays            map[string]int // 内核节点名 → 毫秒；0 测速中，-1 超时
 	testing           bool
 	quitting          bool
@@ -349,6 +353,7 @@ func main() {
 			if !a.quitting {
 				event.PreventDefault()
 				a.window.Hide()
+				a.hintTray()
 				return
 			}
 			a.quitting = false

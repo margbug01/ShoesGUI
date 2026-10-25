@@ -52,6 +52,7 @@ type Settings struct {
 	Mode          string // "" 规则，"global" 全局，"direct" 直连
 	AutoConnect   bool
 	Theme         string // "" 跟随系统，"light"，"dark"
+	TrayHinted    bool   `json:",omitempty"` // 第一次关窗口时提示过「还在托盘里」
 }
 
 // 内核里的组名。节点名不能和它们重复

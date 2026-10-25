@@ -45,7 +45,7 @@ func TestControlsRespondToClicks(t *testing.T) {
 	if a.settings.Theme != "light" || applied != "light" {
 		t.Fatalf("theme: saved %q, applied %q", a.settings.Theme, applied)
 	}
-	r, _ := tester.Find("打开后自动启动")
+	r, _ := tester.Find("打开时自动接管系统代理")
 	tester.ClickAt(770, r.Y+r.H/2+9)
 	tester.Frame()
 	if !a.settings.AutoConnect {
@@ -72,5 +72,39 @@ func TestControlsRespondToClicks(t *testing.T) {
 	tester.Frame()
 	if string(a.draft.XHTTPExtra) != `{"noGRPCHeader":true}` {
 		t.Fatalf("textarea: %q", a.draft.XHTTPExtra)
+	}
+}
+
+// 设置页没有保存按钮：端口回车就存，失焦也存，不合法就在下面说为什么、不存
+func TestPortSavesOnEnterAndBlur(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{settings: defaultSettings(), engine: newEngine(dir), tab: "设置", storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), delays: map[string]int{}, nodeGroup: "全部"}
+	a.portDraft = a.settings.Port
+	tester := ui.NewTester(a.view, 820, 2000)
+	tester.Frame()
+	r, ok := tester.Find("本地端口")
+	if !ok {
+		t.Fatal("no port row")
+	}
+	tester.ClickAt(720, r.Y+r.H/2+9)
+	tester.Frame()
+	tester.Key(ui.Ctrl, ui.KeyA)
+	tester.Type("18080")
+	tester.Key(0, ui.KeyEnter)
+	tester.Frame()
+	tester.Frame()
+	if a.settings.Port != "18080" {
+		t.Fatalf("enter did not save: %q (draft %q)", a.settings.Port, a.portDraft)
+	}
+	tester.ClickAt(720, r.Y+r.H/2+9)
+	tester.Frame()
+	tester.Key(ui.Ctrl, ui.KeyA)
+	tester.Type("99999")
+	tester.Frame()
+	tester.ClickAt(300, 30) // 点别处
+	tester.Frame()
+	tester.Frame()
+	if a.settings.Port != "18080" || a.portError == "" {
+		t.Fatalf("invalid port: saved %q, error %q", a.settings.Port, a.portError)
 	}
 }

@@ -102,6 +102,10 @@ func (a *application) view(c *ui.Context) {
 	busy := a.busy.Load()
 	a.dashOn.Store(a.tab == "仪表盘")
 	if a.tab != a.shownTab {
+		if a.shownTab == "设置" { // 输入框里改了还没回车就换页，也照样存下
+			a.savePort()
+			a.saveKernel()
+		}
 		a.shownTab, a.errorText = a.tab, "" // 报错只跟着出错的那一页
 	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) { windowTexture(theme.Dark).draw(p, r, 0) }).Children(func() {
@@ -249,7 +253,7 @@ func (a *application) settingsView(c *ui.Context) {
 				}
 			}
 		})
-		settingRow(c, "开机启动", "登录 Windows 后在托盘待命", func() {
+		settingRow(c, "开机时启动 Shoes", "登录 Windows 后待在托盘；接不接管代理看下一项", func() {
 			p, on, changed := a.loginPick.bind(a.openAtLogin)
 			ui.Switch(c.Key("open-at-login"), p)
 			if changed {
@@ -260,7 +264,7 @@ func (a *application) settingsView(c *ui.Context) {
 				}
 			}
 		})
-		settingRow(c, "打开后自动启动", "打开 Shoes 时直接接管系统代理", func() {
+		settingRow(c, "打开时自动接管系统代理", "包括开机启动的时候，打开就能直接用", func() {
 			p, on, changed := a.autoPick.bind(a.settings.AutoConnect)
 			ui.Switch(c.Key("auto-connect"), p)
 			if changed {
@@ -271,37 +275,87 @@ func (a *application) settingsView(c *ui.Context) {
 		})
 	})
 	group(c, "连接", func() {
-		settingRow(c, "本地端口", "HTTP / SOCKS5 共用，改完内核会重启", func() { ui.TextInput(c.Key("port"), &a.portDraft).Width(130) })
+		settingRow(c, "本地端口", "HTTP / SOCKS5 共用，回车或点别处就保存，内核会重启", func() {
+			input := ui.TextInput(c.Key("port"), &a.portDraft).Width(130).Label("本地端口")
+			if leftOrSubmitted(input, &a.portFocus) {
+				a.savePort()
+			}
+		})
+		if a.portError != "" {
+			ui.Text(c, a.portError).FontSize(12).TextColor(c.Theme().Danger).Padding(0, 0, 10, 0)
+		}
 	})
-	group(c, "内核", func() {
+	group(c, "高级", func() {
 		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
-			ui.Text(c, "Shoes 路径").FontSize(14)
+			ui.Column(c).Gap(3).Children(func() {
+				ui.Text(c, "Shoes 内核路径").FontSize(14)
+				ui.Text(c, "一般会自动找到，和 ShoesGUI.exe 放在一起就行").FontSize(12).TextColor(c.Theme().TextMuted)
+			})
 			ui.Row(c).FillWidth().Gap(8).Children(func() {
-				ui.TextInput(c.Key("kernel-path"), &a.kernelDraft).Grow(1).Placeholder("shoes.exe")
+				input := ui.TextInput(c.Key("kernel-path"), &a.kernelDraft).Grow(1).Placeholder("shoes.exe").Label("Shoes 内核路径")
+				if leftOrSubmitted(input, &a.kernelFocus) {
+					a.saveKernel()
+				}
 				if ui.Button(c.Key("browse"), "选择").Clicked() {
 					paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.window, Title: "选择 shoes.exe", Filters: []mygo.FileFilter{{Name: "可执行文件", Extensions: []string{"exe"}}}})
 					if err != nil {
 						a.errorText = "无法打开文件"
 					} else if len(paths) > 0 {
 						a.kernelDraft = paths[0]
+						a.saveKernel()
 					}
 				}
 			})
+			if a.kernelError != "" {
+				ui.Text(c, a.kernelError).FontSize(12).TextColor(c.Theme().Danger)
+			}
 		})
 	})
-	ui.Row(c).FillWidth().Padding(16, 0).Children(func() {
-		ui.Spacer(c)
-		if ui.PrimaryButton(c.Key("save-settings"), "保存").MinWidth(88).Clicked() {
-			if _, err := portNumber(a.portDraft); err != nil {
-				a.errorText = err.Error()
-			} else if a.kernelDraft != a.settings.Kernel || a.portDraft != a.settings.Port {
-				next := a.settings
-				next.Kernel, next.Port = a.kernelDraft, a.portDraft
-				a.commit(next)
-			}
-		}
-	})
-	ui.Text(c, "关闭窗口会缩到托盘，从托盘右键菜单退出。").FontSize(12).TextColor(c.Theme().TextMuted).Padding(0, 4)
+	ui.Text(c, "关闭窗口会缩到托盘，从托盘右键菜单退出。").FontSize(12).TextColor(c.Theme().TextMuted).Padding(16, 4)
+}
+
+// leftOrSubmitted 回车或焦点离开输入框时为 true。was 是上一帧有没有焦点，要跨帧存着
+func leftOrSubmitted(input ui.Element, was *bool) bool {
+	submitted := input.Submitted()
+	now := input.Focused()
+	left := *was && !now
+	*was = now
+	return submitted || left
+}
+
+// savePort 端口改了就保存并重启内核；不合法就留着草稿、在输入框下面说为什么
+func (a *application) savePort() {
+	if a.portDraft == a.settings.Port {
+		a.portError = ""
+		return
+	}
+	if _, err := portNumber(a.portDraft); err != nil {
+		a.portError = err.Error()
+		return
+	}
+	next := a.settings
+	next.Port = a.portDraft
+	if a.commit(next) {
+		a.portError = ""
+		a.showNotice("本地端口已改成 " + next.Port + "，内核正在重启")
+	}
+}
+
+func (a *application) saveKernel() {
+	if a.kernelDraft == a.settings.Kernel {
+		a.kernelError = ""
+		return
+	}
+	if err := validKernel(a.kernelDraft); err != nil {
+		a.kernelError = err.Error()
+		return
+	}
+	next := a.settings
+	next.Kernel = a.kernelDraft
+	if a.commit(next) {
+		a.kernelError = ""
+		a.showNotice("内核路径已保存")
+	}
 }
 
 // logView 最新的在上面。「只看重要」藏起连接异常，顶上说一句藏了多少

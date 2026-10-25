@@ -101,6 +101,17 @@ func (a *application) syncTray() {
 	}
 }
 
+// hintTray 第一次关窗口时用系统通知说一声：窗口不见了不等于退出了
+func (a *application) hintTray() {
+	if a.settings.TrayHinted {
+		return
+	}
+	next := a.settings
+	next.TrayHinted = true
+	a.save(next)
+	go mygo.NewNotification(mygo.NotificationOptions{Title: "Shoes 还在托盘里运行", Body: "关窗口只是收到托盘，代理照常工作。要退出请右键托盘图标。"}).Show()
+}
+
 func (a *application) showWindow() {
 	if a.window == nil {
 		return
