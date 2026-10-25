@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestGroupControls(t *testing.T) {
 			theme.Dark = dark
 			mamiColors(&theme)
 			c.SetTheme(&theme)
-			ui.Column(c).Fill().Children(func() { a.nodeGrid(c) })
+			ui.Column(c).Fill().Children(func() { a.nodeGrid(c); a.statusBar(c) })
 		}, 820, 620)
 		click := func(label string) {
 			t.Helper()
@@ -120,5 +121,34 @@ func TestNodeGridLayout(t *testing.T) {
 	}
 	if got := visibleNodes(nodes, "全部", "missing"); len(got) != 0 {
 		t.Fatal("empty search result incorrect")
+	}
+}
+
+func TestDeleteConfirmsOnTheCard(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{storageOK: true, settingsPath: filepath.Join(dir, "settings.dpapi"), settings: defaultSettings(), engine: newEngine(dir), nodeGroup: "全部", delays: map[string]int{}}
+	a.settings.Nodes = []Node{sampleNode("Trojan"), sampleNode("Trojan"), sampleNode("Trojan")}
+	for i, name := range []string{"一号", "二号", "三号"} {
+		a.settings.Nodes[i].Name = name
+	}
+	a.settings.Selected = 1
+	tester := ui.NewTester(func(c *ui.Context) {
+		ui.Column(c).Fill().Children(func() { a.nodeGrid(c); a.statusBar(c) })
+	}, 820, 620)
+	a.editIndex, a.deleteConfirm = 1, true
+	tester.Frame()
+	if _, ok := tester.Find("删除这个节点？"); !ok {
+		t.Fatal("confirmation not shown on the card")
+	}
+	if err := tester.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	tester.Frame()
+	if len(a.settings.Nodes) != 2 || a.settings.Selected != 1 || a.settings.Nodes[1].Name != "三号" {
+		t.Fatalf("delete: %+v selected %d", len(a.settings.Nodes), a.settings.Selected)
+	}
+	if !strings.Contains(a.notice, "三号") {
+		t.Fatalf("no notice about the new selection: %q", a.notice)
 	}
 }

@@ -101,6 +101,9 @@ func (a *application) view(c *ui.Context) {
 	status, logs, ready, proxy := a.engine.snapshot()
 	busy := a.busy.Load()
 	a.dashOn.Store(a.tab == "仪表盘")
+	if a.tab != a.shownTab {
+		a.shownTab, a.errorText = a.tab, "" // 报错只跟着出错的那一页
+	}
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) { windowTexture(theme.Dark).draw(p, r, 0) }).Children(func() {
 		c.SetTheme(sidebarTheme(&theme))
 		ui.Column(c).Width(184).FillHeight().Draw(func(p *ui.Painter, r ui.Rect) {
@@ -180,10 +183,35 @@ func (a *application) view(c *ui.Context) {
 					}
 				})
 			})
-			if a.errorText != "" {
-				ui.Text(c, a.errorText).FontSize(12).TextColor(theme.Danger).Padding(8, 28, 16, 28)
-			}
+			a.statusBar(c)
 		})
+	})
+}
+
+// statusBar 窗口底部一行，在滚动区外面，列表滚到哪都看得见：报错红字、普通提示灰字，都能关
+func (a *application) statusBar(c *ui.Context) {
+	text, color, closable := a.errorText, c.Theme().Danger, true
+	if text == "" && !a.storageOK {
+		text, closable = "无法读取本地设置，改动不会保存", false
+	}
+	if text == "" {
+		text, color = a.notice, c.Theme().TextMuted
+	}
+	if text == "" {
+		return
+	}
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(6, 22, 12, 28).Children(func() {
+		ui.Text(c, text).FontSize(12).TextColor(color).Grow(1)
+		if !closable {
+			return
+		}
+		button := ui.ButtonBase(c.Key("dismiss-status")).Size(24, 24).Center().Radius(6).Label("关闭提示").Tooltip("关闭提示").Cursor(ui.CursorPointer)
+		if button.Hovered() {
+			button.Background(c.Theme().SurfaceHover)
+		}
+		if button.Children(func() { ui.Text(c, "✕").FontSize(11).TextColor(c.Theme().TextMuted) }).Clicked() {
+			a.errorText, a.notice = "", ""
+		}
 	})
 }
 

@@ -36,6 +36,7 @@ type application struct {
 	window            *mygo.Window
 	busy              atomic.Bool
 	tab               string
+	shownTab          string // 上一帧显示的页，换页时清掉报错
 	editing           bool
 	editIndex         int
 	draft             Node

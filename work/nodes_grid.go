@@ -143,34 +143,6 @@ func (a *application) nodeGrid(c *ui.Context) {
 			ui.Text(c, a.groupError).FontSize(12).TextColor(c.Theme().Danger)
 		}
 	}
-	if a.notice != "" {
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, a.notice).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1)
-			if ui.Button(c.Key("dismiss-notice"), "关闭提示").Clicked() {
-				a.notice = ""
-			}
-		})
-	}
-	if a.deleteConfirm && a.editIndex >= 0 && a.editIndex < len(a.settings.Nodes) {
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(8, 0).Children(func() {
-			ui.Text(c, "删除「"+a.settings.Nodes[a.editIndex].Name+"」？").FontSize(12).SingleLine().Grow(1)
-			if ui.Button(c.Key("cancel-delete"), "取消").Clicked() {
-				a.deleteConfirm = false
-			}
-			if ui.Button(c.Key("confirm-delete"), "删除").TextColor(c.Theme().Danger).Clicked() {
-				index := a.editIndex
-				next := a.settings
-				next.Nodes = append([]Node(nil), next.Nodes...)
-				next.Nodes = append(next.Nodes[:index], next.Nodes[index+1:]...)
-				if next.Selected > index || (next.Selected == index && index == len(next.Nodes)) {
-					next.Selected--
-				}
-				if a.commit(next) {
-					a.deleteConfirm = false
-				}
-			}
-		})
-	}
 	indices := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 	if len(indices) == 0 {
 		text := "没有匹配的节点"
@@ -182,10 +154,22 @@ func (a *application) nodeGrid(c *ui.Context) {
 	}
 	names := kernelNames(a.settings.Nodes)
 	grid := ui.Grid(c.Key("node-grid")).FillWidth().Gap(8)
+	remove := -1 // 确认删除要等网格建完再删，不然这一帧后面的下标就错了
+	defer func() {
+		if remove >= 0 {
+			a.deleteNode(remove)
+		}
+	}()
 	grid.Columns(nodeColumns(grid.Bounds().W)).Children(func() {
 		for _, index := range indices {
 			node := a.settings.Nodes[index]
 			selected := a.settings.Selected == index
+			if a.deleteConfirm && a.editIndex == index {
+				if a.deleteCard(c, index) {
+					remove = index
+				}
+				continue
+			}
 			card := ui.Row(c.Key(fmt.Sprintf("node-%d", index))).MinWidth(0).Height(64).Clip().AlignItems(ui.Center).Radius(9)
 			background := paneColor(c.Theme())
 			if card.Hovered() {
@@ -254,6 +238,40 @@ func (a *application) nodeGrid(c *ui.Context) {
 			})
 		}
 	})
+}
+
+// deleteCard 删除确认就放在那张卡片原来的位置上，点的是哪张就在哪张上确认
+func (a *application) deleteCard(c *ui.Context, index int) (confirmed bool) {
+	t := c.Theme()
+	ui.Row(c.Key(fmt.Sprintf("node-%d", index))).MinWidth(0).Height(64).Clip().AlignItems(ui.Center).Gap(6).Padding(0, 10, 0, 12).Radius(9).Background(t.Danger.Alpha(0.08)).Border(1, t.Danger.Alpha(0.45)).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+			ui.Text(c, "删除这个节点？").FontSize(12).FontWeight(600).SingleLine()
+			ui.Text(c, a.settings.Nodes[index].Name).FontSize(11).TextColor(t.TextMuted).SingleLine()
+		})
+		if ui.Button(c.Key("cancel-delete"), "取消").Clicked() {
+			a.deleteConfirm = false
+		}
+		confirmed = ui.Button(c.Key("confirm-delete"), "删除").TextColor(t.Danger).Clicked()
+	})
+	return confirmed
+}
+
+// deleteNode 删掉第 index 个节点。删的是正在用的那个就顺延到下一个，并说一声换成了谁
+func (a *application) deleteNode(index int) {
+	next := a.settings
+	next.Nodes = append([]Node(nil), next.Nodes...)
+	next.Nodes = append(next.Nodes[:index], next.Nodes[index+1:]...)
+	wasSelected := next.Selected == index
+	if next.Selected > index || (wasSelected && index == len(next.Nodes)) {
+		next.Selected--
+	}
+	if !a.commit(next) {
+		return
+	}
+	a.deleteConfirm = false
+	if wasSelected && next.Selected >= 0 {
+		a.showNotice("删掉的是正在用的节点，已改用「" + next.Nodes[next.Selected].Name + "」")
+	}
 }
 
 // delayBadge 显示延迟：0 表示测速中，-1 超时，没测过不显示
