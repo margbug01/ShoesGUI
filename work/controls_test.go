@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -106,5 +107,66 @@ func TestPortSavesOnEnterAndBlur(t *testing.T) {
 	tester.Frame()
 	if a.settings.Port != "18080" || a.portError == "" {
 		t.Fatalf("invalid port: saved %q, error %q", a.settings.Port, a.portError)
+	}
+}
+
+func TestShortcuts(t *testing.T) {
+	saved := readClipboard
+	readClipboard = func() string { return "trojan://x@example.com:443#a" }
+	defer func() { readClipboard = saved }()
+	dir := t.TempDir()
+	a := &application{settings: defaultSettings(), engine: newEngine(dir), tab: "仪表盘", storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), delays: map[string]int{}, nodeGroup: "全部"}
+	a.settings.Nodes, a.settings.Selected = []Node{sampleNode("Trojan")}, 0
+	tester := ui.NewTester(a.view, 820, 1000)
+	tester.Frame()
+	tester.Key(ui.Ctrl, ui.KeyF)
+	tester.Frame()
+	tester.Frame()
+	if a.tab != "代理" || !tester.Focused("搜索节点") {
+		t.Fatalf("Ctrl+F: tab %q, search focused %v", a.tab, tester.Focused("搜索节点"))
+	}
+	tester.Key(ui.Ctrl, ui.KeyV) // 搜索框有焦点，是粘贴，不该打开导入
+	tester.Frame()
+	if a.importing {
+		t.Fatal("Ctrl+V in the search box opened import")
+	}
+	tester.Key(0, ui.KeyEscape)
+	tester.ClickAt(500, 900) // 点空白处，让搜索框失去焦点
+	tester.Frame()
+	tester.Key(ui.Ctrl, ui.KeyV)
+	tester.Frame()
+	if !a.importing || a.importText == "" {
+		t.Fatalf("Ctrl+V on the node page did not open import (focused search %v)", tester.Focused("搜索节点"))
+	}
+}
+
+func TestLogsCopyAndClear(t *testing.T) {
+	var copied string
+	saved := writeClipboard
+	writeClipboard = func(s string) { copied = s }
+	defer func() { writeClipboard = saved }()
+	dir := t.TempDir()
+	a := &application{settings: defaultSettings(), engine: newEngine(dir), tab: "日志", storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), delays: map[string]int{}, nodeGroup: "全部", logFilter: 1}
+	a.engine.event("", "Shoes 已启动")
+	a.engine.event("启动失败", "内核退出：ERROR 端口被占用")
+	a.engine.connEvent("对方重置了连接")
+	tester := ui.NewTester(a.view, 820, 1000)
+	tester.Frame()
+	if err := tester.Click("复制"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if !strings.Contains(copied, "端口被占用") || strings.Contains(copied, "重置") {
+		t.Fatalf("copied %q", copied)
+	}
+	if !(logEntry{text: "内核退出：ERROR 端口被占用"}).bad() || (logEntry{text: "Shoes 已启动"}).bad() {
+		t.Fatal("error classification")
+	}
+	if err := tester.Click("清空"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if _, logs, _, _ := a.engine.snapshot(); len(logs) != 0 {
+		t.Fatal("logs not cleared")
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -94,6 +95,12 @@ func (a *application) titleBar(c *ui.Context) {
 
 func (a *application) view(c *ui.Context) {
 	registerFonts()
+	// 快捷键。输入框有焦点时按键先给输入框，所以 Ctrl+V 在输入框里照常是粘贴
+	c.OnShortcut(ui.Ctrl, ui.KeyF, func() { a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true })
+	c.OnShortcut(ui.Ctrl, ui.KeyN, func() { a.tab = "代理"; a.beginEdit(-1) })
+	if a.tab == "代理" && !a.editing && !a.importing {
+		c.OnShortcut(ui.Ctrl, ui.KeyV, a.openImport)
+	}
 	theme := *c.Theme()
 	theme.Font = "MiSans, system-ui"
 	mamiColors(&theme)
@@ -371,9 +378,10 @@ func (a *application) saveKernel() {
 	}
 }
 
-// logView 最新的在上面。「只看重要」藏起连接异常，顶上说一句藏了多少
+// logView 最新的在上面。「只看重要」藏起连接异常，顶上说一句藏了多少。能搜、能选中复制、能一键复制和清空，报错标红
 func (a *application) logView(c *ui.Context, logs []logEntry) {
-	muted := c.Theme().TextMuted
+	t := c.Theme()
+	query := strings.ToLower(strings.TrimSpace(a.logSearch))
 	hidden := 0
 	var shown []logEntry
 	for i := len(logs) - 1; i >= 0; i-- {
@@ -381,15 +389,43 @@ func (a *application) logView(c *ui.Context, logs []logEntry) {
 			hidden += logs[i].count
 			continue
 		}
+		if query != "" && !strings.Contains(strings.ToLower(logs[i].String()), query) {
+			continue
+		}
 		shown = append(shown, logs[i])
 	}
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Padding(0, 0, 6, 0).Children(func() {
+		ui.TextInput(c.Key("log-search"), &a.logSearch).Grow(1).Placeholder("搜索日志").Label("搜索日志")
+		if ui.Button(c.Key("log-copy"), "复制").Disabled(len(shown) == 0).Tooltip("复制下面显示的日志，发给别人帮忙看").Clicked() {
+			lines := make([]string, len(shown))
+			for i, entry := range shown {
+				lines[i] = entry.String()
+			}
+			writeClipboard(strings.Join(lines, "\n"))
+			a.showNotice(fmt.Sprintf("已复制 %d 条日志", len(shown)))
+		}
+		if ui.Button(c.Key("log-clear"), "清空").Disabled(len(logs) == 0).Clicked() {
+			a.engine.clearLogs()
+		}
+	})
 	if hidden > 0 {
-		ui.Text(c, fmt.Sprintf("已藏起 %d 条连接异常：单条连接没正常收尾，不影响别的连接", hidden)).FontSize(12).TextColor(muted).Padding(0, 0, 4, 0)
+		ui.Text(c, fmt.Sprintf("已藏起 %d 条连接异常：单条连接没正常收尾，不影响别的连接", hidden)).FontSize(12).TextColor(t.TextMuted).Padding(0, 0, 4, 0)
 	}
-	if len(shown) == 0 && hidden == 0 {
-		ui.Text(c, "暂无日志").FontSize(13).TextColor(muted)
+	if len(shown) == 0 {
+		text := "暂无日志"
+		if query != "" {
+			text = "没有匹配的日志"
+		}
+		ui.Text(c, text).FontSize(13).TextColor(t.TextMuted)
+		return
 	}
-	for _, entry := range shown {
-		ui.Text(c, entry.String()).FontSize(12).TextColor(muted)
-	}
+	ui.Column(c).FillWidth().Gap(4).Selectable().Children(func() {
+		for _, entry := range shown {
+			color := t.TextMuted
+			if entry.bad() {
+				color = t.Danger
+			}
+			ui.Text(c, entry.String()).FontSize(12).TextColor(color)
+		}
+	})
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -68,6 +69,7 @@ func (a *application) createTray() {
 		menu := mygo.NewMenu([]*mygo.MenuItem{
 			{Label: "打开 Shoes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
 			{Label: toggle, Disabled: a.busy.Load() || len(a.settings.Nodes) == 0, Click: func(*mygo.MenuItem, *mygo.Window) { a.toggleConnect() }},
+			{Label: "节点", Submenu: a.trayNodes(), Disabled: len(a.settings.Nodes) == 0},
 			{Label: "出站模式", Submenu: modeItems},
 			mygo.Separator(),
 			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { a.quit() }},
@@ -76,6 +78,38 @@ func (a *application) createTray() {
 		defer tray.SetMenu(nil)
 		tray.PopUpMenu()
 	})
+}
+
+// trayNodes 托盘里切节点：一个分组一个子菜单（只有一组就直接列出来），带上次测的延迟
+func (a *application) trayNodes() []*mygo.MenuItem {
+	names := kernelNames(a.settings.Nodes)
+	groups := orderedGroups(a.settings)
+	var out []*mygo.MenuItem
+	for _, group := range groups {
+		var items []*mygo.MenuItem
+		for i, n := range a.settings.Nodes {
+			if nodeGroupName(n) != group {
+				continue
+			}
+			index, label := i, n.Name
+			if ms := a.delays[names[i]]; ms > 0 {
+				label += fmt.Sprintf("    %d ms", ms)
+			}
+			items = append(items, &mygo.MenuItem{Label: label, Type: mygo.MenuItemRadio, Checked: a.settings.Selected == i,
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.window.Update(func() {
+						if index != a.settings.Selected && index < len(a.settings.Nodes) {
+							a.choose(index)
+						}
+					})
+				}})
+		}
+		if len(groups) == 1 {
+			return items
+		}
+		out = append(out, &mygo.MenuItem{Label: group, Submenu: items})
+	}
+	return out
 }
 
 // syncTray 只在状态变了时换图标和提示

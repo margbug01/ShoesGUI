@@ -36,15 +36,15 @@ func (a *application) transportFields(c *ui.Context) {
 		settingRow(c, "安全层", "", func() { ui.Select(c.Key("security"), p, choices).Width(240) })
 		a.draft.TLS, a.draft.Reality = security == "tls", security == "reality"
 		if security != "none" {
-			field(c, "SNI", &a.draft.SNI, false)
+			field(c, "SNI", &a.draft.SNI)
 		}
 		if a.draft.Reality {
-			field(c, "公钥", &a.draft.PublicKey, true)
-			field(c, "Short ID", &a.draft.ShortID, true)
+			field(c, "公钥", &a.draft.PublicKey)
+			field(c, "Short ID", &a.draft.ShortID)
 		}
 		if a.draft.Network == "ws" || a.draft.Network == "xhttp" {
-			field(c, "Host", &a.draft.HTTPHost, false)
-			field(c, "路径", &a.draft.Path, false)
+			field(c, "Host", &a.draft.HTTPHost)
+			field(c, "路径", &a.draft.Path)
 		}
 		if a.draft.Network == "xhttp" {
 			if a.draft.Mode == "" {
@@ -74,12 +74,12 @@ func (a *application) transportFields(c *ui.Context) {
 	})
 	if a.advanced {
 		group(c, "", func() {
-			field(c, "ALPN", &a.draft.ALPN, false)
+			field(c, "ALPN", &a.draft.ALPN)
 			if a.draft.Kind == "VLESS" {
-				field(c, "VLESS 加密", &a.draft.Encryption, true)
+				field(c, "VLESS 加密", &a.draft.Encryption)
 			}
 			if a.draft.Reality {
-				field(c, "ML-DSA 验证", &a.draft.MLDSAVerify, true)
+				field(c, "ML-DSA 验证", &a.draft.MLDSAVerify)
 			}
 			if a.draft.TLS {
 				settingRow(c, "跳过证书验证", "", func() { ui.Switch(c.Key("skip-verify"), &a.draft.SkipVerify) })
@@ -422,3 +422,6 @@ func (a *application) importView(c *ui.Context) {
 
 // readClipboard 测试里换掉：离屏测试没有主循环，读剪贴板会一直等主线程
 var readClipboard = func() string { return mygo.Clipboard.ReadText() }
+
+// writeClipboard 和 readClipboard 一样，测试里换掉
+var writeClipboard = func(text string) { mygo.Clipboard.WriteText(text) }

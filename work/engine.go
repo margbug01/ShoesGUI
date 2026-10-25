@@ -93,6 +93,17 @@ func (e *engine) connEvent(reason string) {
 	e.addLog(entry)
 }
 
+// bad 报错类的日志，日志页标红
+func (l logEntry) bad() bool {
+	return l.conn == "" && (strings.Contains(l.text, "ERROR") || strings.Contains(l.text, "失败") || strings.HasPrefix(l.text, "内核退出") || l.text == "内核意外退出" || strings.Contains(l.text, "没有就绪"))
+}
+
+func (e *engine) clearLogs() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.logs = nil
+}
+
 func (e *engine) addLog(entry logEntry) {
 	e.logs = append(e.logs, entry)
 	if len(e.logs) > 300 {

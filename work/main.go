@@ -33,6 +33,8 @@ type application struct {
 	sortKey        string // 上次排序时的节点集合，测速中集合没变就沿用 sorted
 	sorted         []int
 	focusSearch    bool
+	reveal         bool // 编辑节点时把密码、UUID 显示出来
+	logSearch      string
 	groupDraft     string
 	groupError     string
 	nodeGroup      string
@@ -207,21 +209,50 @@ func (a *application) testNodes(indices []int, tcp bool) {
 			if err != nil {
 				a.errorText = "测速失败：" + err.Error()
 			}
+			a.saveDelays()
 		})
 	}()
 }
 
-func field(c *ui.Context, label string, value *string, password bool) {
-	settingRow(c, label, "", func() {
-		input := ui.TextInput(c.Key(label), value).Width(240)
-		if password {
-			input.Password()
+// saveDelays 把测速结果存进设置，只留还在的节点
+func (a *application) saveDelays() {
+	if !a.storageOK {
+		return
+	}
+	next := a.settings
+	next.Delays = map[string]int{}
+	for _, name := range kernelNames(next.Nodes) {
+		if ms, ok := a.delays[name]; ok && ms != 0 {
+			next.Delays[name] = ms
 		}
+	}
+	a.save(next)
+}
+
+func field(c *ui.Context, label string, value *string) {
+	settingRow(c, label, "", func() { ui.TextInput(c.Key(label), value).Width(240).Label(label) })
+}
+
+// secretField 密码、UUID 这类真正的秘密默认遮住，旁边一个「显示」好核对粘进来的对不对
+func (a *application) secretField(c *ui.Context, label string, value *string) {
+	settingRow(c, label, "", func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			input := ui.TextInput(c.Key(label), value).Width(170).Label(label)
+			text := "显示"
+			if a.reveal {
+				text = "隐藏"
+			} else {
+				input.Password()
+			}
+			if ui.Button(c.Key(label+"-reveal"), text).Shrink(0).Clicked() {
+				a.reveal = !a.reveal
+			}
+		})
 	})
 }
 
 func (a *application) beginEdit(index int) {
-	a.editing, a.editIndex, a.deleteConfirm = true, index, false
+	a.editing, a.editIndex, a.deleteConfirm, a.reveal = true, index, false, false
 	a.errorText = ""
 	a.importing = false
 	a.advanced = false
@@ -241,28 +272,28 @@ func (a *application) nodesView(c *ui.Context) {
 	if a.editing {
 
 		group(c, "", func() {
-			field(c, "名称", &a.draft.Name, false)
-			field(c, "分组", &a.draft.Group, false)
+			field(c, "名称", &a.draft.Name)
+			field(c, "分组", &a.draft.Group)
 			settingRow(c, "协议", "", func() {
 				ui.Select(c.Key("protocol"), &a.draft.Kind, []string{"SOCKS5", "HTTP", "Shadowsocks", "Trojan", "VLESS", "VMess", "AnyTLS"}).Width(240)
 			})
-			field(c, "服务器", &a.draft.Host, false)
-			field(c, "端口", &a.draft.Port, false)
+			field(c, "服务器", &a.draft.Host)
+			field(c, "端口", &a.draft.Port)
 		})
 		group(c.Key(a.draft.Kind), "认证", func() {
 			switch a.draft.Kind {
 			case "SOCKS5", "HTTP":
-				field(c, "用户名", &a.draft.Username, false)
-				field(c, "密码", &a.draft.Password, true)
+				field(c, "用户名", &a.draft.Username)
+				a.secretField(c, "密码", &a.draft.Password)
 			case "Shadowsocks":
 				settingRow(c, "加密方式", "", func() {
 					ui.Select(c.Key("cipher"), &a.draft.Cipher, []string{"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-ietf-poly1305"}).Width(240)
 				})
-				field(c, "密码", &a.draft.Password, true)
+				a.secretField(c, "密码", &a.draft.Password)
 			case "Trojan", "AnyTLS":
-				field(c, "密码", &a.draft.Password, true)
+				a.secretField(c, "密码", &a.draft.Password)
 			case "VLESS", "VMess":
-				field(c, "UUID", &a.draft.UUID, true)
+				a.secretField(c, "UUID", &a.draft.UUID)
 			}
 		})
 
@@ -321,7 +352,7 @@ func main() {
 		return
 	}
 	e := newEngine(dir)
-	a := &application{settings: defaultSettings(), engine: e, tab: "仪表盘", storageOK: true, settingsPath: filepath.Join(dir, "settings.dpapi"), delays: map[string]int{}, nodeGroup: "全部"}
+	a := &application{settings: defaultSettings(), engine: e, tab: "仪表盘", storageOK: true, settingsPath: filepath.Join(dir, "settings.dpapi"), delays: map[string]int{}, nodeGroup: "全部", logFilter: 1}
 	if err := loadEncrypted(a.settingsPath, &a.settings); err != nil && !errors.Is(err, os.ErrNotExist) {
 		a.storageOK = false
 		a.errorText = "无法读取本地设置"
@@ -332,6 +363,9 @@ func main() {
 	}
 	if a.settings.Port == "" {
 		a.settings.Port = "10808"
+	}
+	for name, ms := range a.settings.Delays { // 上次的测速结果，重开也看得到
+		a.delays[name] = ms
 	}
 	if a.settings.Kernel == "" {
 		a.settings.Kernel = detectKernel()
