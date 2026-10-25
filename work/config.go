@@ -302,11 +302,33 @@ func protocol(n Node) map[string]any {
 		}
 	} else if n.TLS || n.Kind == "Trojan" || n.Kind == "AnyTLS" {
 		p = map[string]any{"type": "tls", "verify": !n.SkipVerify, "sni_hostname": sni, "vision": vision, "protocol": p}
-		if n.ALPN != "" {
-			p["alpn_protocols"] = strings.Split(n.ALPN, ",")
+		if alpn := tlsALPN(n); len(alpn) > 0 {
+			p["alpn_protocols"] = alpn
 		}
 	}
 	return p
+}
+
+// tlsALPN: XHTTP over TLS in shoes accepts exactly one ALPN (h2 or http/1.1), while share links often say "h2,http/1.1"
+func tlsALPN(n Node) []string {
+	if n.ALPN == "" {
+		return nil
+	}
+	alpn := strings.Split(n.ALPN, ",")
+	for i := range alpn {
+		alpn[i] = strings.TrimSpace(alpn[i])
+	}
+	if n.Network != "xhttp" {
+		return alpn
+	}
+	for _, want := range []string{"h2", "http/1.1"} {
+		for _, a := range alpn {
+			if a == want {
+				return []string{want}
+			}
+		}
+	}
+	return nil
 }
 
 var privateRanges = []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10"}

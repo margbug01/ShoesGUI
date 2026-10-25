@@ -214,3 +214,14 @@ func TestSaveFailureKeepsNodes(t *testing.T) {
 		t.Fatal("failed save altered committed state")
 	}
 }
+
+func TestXHTTPALPNNarrowedForShoes(t *testing.T) {
+	for alpn, want := range map[string]string{"h2,http/1.1": "h2", "http/1.1": "http/1.1", "h3": "", "": "", "h2, http/1.1": "h2"} {
+		if got := strings.Join(tlsALPN(Node{Network: "xhttp", ALPN: alpn}), " "); got != want {
+			t.Errorf("xhttp %q -> %s, want %s", alpn, got, want)
+		}
+	}
+	if got := strings.Join(tlsALPN(Node{Network: "ws", ALPN: "h2,http/1.1"}), " "); got != "h2 http/1.1" {
+		t.Errorf("ws alpn changed: %s", got)
+	}
+}
