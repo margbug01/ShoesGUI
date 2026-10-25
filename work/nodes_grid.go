@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -21,6 +22,17 @@ func nodeGroupName(node Node) string {
 		return "未分组"
 	}
 	return node.Group
+}
+
+// groupKey 分组标签对应的 Node.Group：「未分组」是 ""，「全部」不是一个分组
+func groupKey(label string) (string, bool) {
+	switch label {
+	case "全部", "":
+		return "", false
+	case "未分组":
+		return "", true
+	}
+	return label, true
 }
 
 func visibleNodes(nodes []Node, group, query string) []int {
@@ -141,6 +153,24 @@ func (a *application) nodeGrid(c *ui.Context) {
 		})
 		if a.groupError != "" {
 			ui.Text(c, a.groupError).FontSize(12).TextColor(c.Theme().Danger)
+		}
+	}
+	if group, ok := groupKey(a.nodeGroup); ok {
+		if source, ok := a.settings.Subscriptions[group]; ok {
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(0, 0, 8, 0).Children(func() {
+				host := source
+				if u, err := url.Parse(source); err == nil {
+					host = u.Host
+				}
+				ui.Text(c, "订阅 · "+host).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0)
+				label := "更新订阅"
+				if a.fetching {
+					label = "更新中…"
+				}
+				if ui.Button(c.Key("update-sub"), label).Disabled(a.fetching).Clicked() {
+					a.updateSubscription(group)
+				}
+			})
 		}
 	}
 	indices := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)

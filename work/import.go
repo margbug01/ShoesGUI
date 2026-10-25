@@ -18,6 +18,7 @@ import (
 type importResult struct {
 	Nodes  []Node
 	Issues []string
+	Source string // 从订阅地址拉来的就是那个地址
 }
 
 func decodeBase64(value string) ([]byte, error) {
@@ -52,10 +53,16 @@ func parseImport(text string) importResult {
 	return result
 }
 
-func loadImport(text string) importResult {
+// subscriptionURL 认出订阅地址：http(s)、不带账号、只有一行。只有主机加端口的当成 HTTP 代理链接
+func subscriptionURL(text string) bool {
 	text = strings.TrimSpace(text)
 	target, err := url.Parse(text)
-	if err == nil && (target.Scheme == "http" || target.Scheme == "https") && target.User == nil && (target.Port() == "" || (target.Path != "" && target.Path != "/") || target.RawQuery != "") && !strings.ContainsAny(text, "\r\n ") {
+	return err == nil && (target.Scheme == "http" || target.Scheme == "https") && target.User == nil && (target.Port() == "" || (target.Path != "" && target.Path != "/") || target.RawQuery != "") && !strings.ContainsAny(text, "\r\n ")
+}
+
+func loadImport(text string) importResult {
+	text = strings.TrimSpace(text)
+	if subscriptionURL(text) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, text, nil)
@@ -75,7 +82,9 @@ func loadImport(text string) importResult {
 		if err != nil || len(data) > 8*1024*1024 {
 			return importResult{Issues: []string{"订阅内容无法读取或过大"}}
 		}
-		return parseImport(string(data))
+		result := parseImport(string(data))
+		result.Source = text
+		return result
 	}
 	return parseImport(text)
 }
@@ -326,6 +335,60 @@ func importBatch(settings Settings, incoming []Node, target string) (Settings, i
 		next.Groups = append(append([]string(nil), settings.Groups...), target)
 	}
 	return next, added
+}
+
+// syncGroup 拿订阅的最新内容替换 group 里的节点：同名的就地换成新配置（位置不变），
+// 新名字加到最后，订阅里已经没有的删掉。正在用的节点还在就接着用它，没了就换成这个分组的第一个
+func syncGroup(settings Settings, group string, incoming []Node) (next Settings, added, updated, removed int) {
+	queue := map[string][]int{} // 名字 → 组里同名节点的下标，按先后
+	for i, n := range settings.Nodes {
+		if n.Group == group {
+			queue[n.Name] = append(queue[n.Name], i)
+		}
+	}
+	replacement := map[int]Node{}
+	var fresh []Node
+	for _, n := range incoming {
+		n.Group = group
+		if q := queue[n.Name]; len(q) > 0 {
+			replacement[q[0]], queue[n.Name] = n, q[1:]
+		} else {
+			fresh = append(fresh, n)
+		}
+	}
+	next = settings
+	next.Nodes = nil
+	moved := map[int]int{}
+	for i, n := range settings.Nodes {
+		if n.Group == group {
+			r, ok := replacement[i]
+			if !ok {
+				removed++
+				continue
+			}
+			if nodeIdentity(r) != nodeIdentity(n) {
+				updated++
+			}
+			n = r
+		}
+		moved[i] = len(next.Nodes)
+		next.Nodes = append(next.Nodes, n)
+	}
+	next.Nodes = append(next.Nodes, fresh...)
+	added = len(fresh)
+	next.Selected = -1
+	if j, ok := moved[settings.Selected]; ok {
+		next.Selected = j
+	} else if len(next.Nodes) > 0 {
+		next.Selected = 0
+		for j, n := range next.Nodes {
+			if n.Group == group {
+				next.Selected = j
+				break
+			}
+		}
+	}
+	return next, added, updated, removed
 }
 
 func mergeNodes(settings Settings, incoming []Node) (Settings, int) {

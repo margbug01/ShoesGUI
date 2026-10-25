@@ -216,3 +216,65 @@ func TestTransportConfig(t *testing.T) {
 		t.Fatal("native Vision at wrong layer")
 	}
 }
+
+func TestSyncGroup(t *testing.T) {
+	node := func(name, group, password string) Node {
+		n := sampleNode("Trojan")
+		n.Name, n.Group, n.Password = name, group, password
+		return n
+	}
+	s := defaultSettings()
+	s.Nodes = []Node{node("手动", "", "x"), node("香港", "机场", "old"), node("日本", "机场", "old"), node("美国", "机场", "old")}
+	s.Selected = 2 // 日本
+	next, added, updated, removed := syncGroup(s, "机场", []Node{node("日本", "", "new"), node("香港", "", "old"), node("新加坡", "", "new")})
+	if added != 1 || updated != 1 || removed != 1 {
+		t.Fatalf("added %d updated %d removed %d", added, updated, removed)
+	}
+	names := []string{}
+	for _, n := range next.Nodes {
+		names = append(names, n.Name+"/"+n.Group+"/"+n.Password)
+	}
+	if strings.Join(names, ",") != "手动//x,香港/机场/old,日本/机场/new,新加坡/机场/new" {
+		t.Fatal(names)
+	}
+	if next.Nodes[next.Selected].Name != "日本" {
+		t.Fatal("selection did not follow the node", next.Selected)
+	}
+	s.Selected = 3 // 美国，同步后没了
+	next, _, _, _ = syncGroup(s, "机场", []Node{node("香港", "", "old")})
+	if next.Nodes[next.Selected].Name != "香港" {
+		t.Fatal("removed selection should fall back to the group", next.Selected)
+	}
+	if len(s.Nodes) != 4 || s.Nodes[2].Password != "old" {
+		t.Fatal("input settings were modified")
+	}
+}
+
+func TestSubscriptionBindsAndReimportUpdates(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{settings: defaultSettings(), storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), engine: newEngine(dir), nodeGroup: "全部"}
+	first := parseImport("trojan://old@example.com:443#香港").Nodes
+	start := func(nodes []Node) {
+		a.importing, a.importText, a.importParsed = true, "https://sub.example/x", "https://sub.example/x"
+		a.importResult = importResult{Nodes: nodes, Source: "https://sub.example/x"}
+	}
+	start(first)
+	a.importNew, a.importNewName = true, "机场"
+	a.finishImport()
+	if a.settings.Subscriptions["机场"] != "https://sub.example/x" || len(a.settings.Nodes) != 1 {
+		t.Fatalf("subscription not bound: %v", a.settings.Subscriptions)
+	}
+	start(parseImport("trojan://new@example.com:443#香港").Nodes)
+	a.importNew, a.importTarget = false, "机场"
+	a.finishImport()
+	if len(a.settings.Nodes) != 1 || a.settings.Nodes[0].Password != "new" || a.importing {
+		t.Fatalf("re-import should update in place: %+v", a.settings.Nodes)
+	}
+	a.settings.Nodes = append(a.settings.Nodes, Node{Name: "手动", Kind: "SOCKS5", Host: "h", Port: "1"})
+	start(first)
+	a.importTarget = "未分组"
+	a.finishImport()
+	if _, bound := a.settings.Subscriptions[""]; bound {
+		t.Fatal("subscription bound to a group with manual nodes")
+	}
+}

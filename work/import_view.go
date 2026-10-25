@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -162,19 +164,95 @@ func (a *application) finishImport() {
 	if target == "未分组" {
 		target = ""
 	}
-	next, added := importBatch(a.settings, a.importResult.Nodes, target)
-	if added > 0 && !a.commit(next) {
+	result := a.importResult
+	source := result.Source
+	if source != "" && a.settings.Subscriptions[target] == source {
+		// 同一个订阅再导一次就是更新，不然换了密码的节点会再加一份、旧的留着
+		if a.applySync(target, result) {
+			a.closeImport()
+		}
 		return
 	}
-	skipped := len(a.importResult.Nodes) - added
-	if added > 0 {
-		a.showNotice(fmt.Sprintf("已导入 %d 个至「%s」，跳过 %d 个重复节点", added, name, skipped))
-	} else {
-		a.showNotice(fmt.Sprintf("%d 个节点已存在，未重复导入或新建分组", skipped))
+	// 订阅只绑到空分组：更新会删掉订阅里没有的节点，不能连带删掉手动加的
+	bind := source != "" && groupCounts(a.settings)[name] == 0
+	next, added := importBatch(a.settings, result.Nodes, target)
+	if bind {
+		next.Subscriptions = maps.Clone(next.Subscriptions)
+		if next.Subscriptions == nil {
+			next.Subscriptions = map[string]string{}
+		}
+		next.Subscriptions[target] = source
+		if target != "" && !slices.Contains(next.Groups, target) {
+			next.Groups = append(append([]string(nil), next.Groups...), target)
+		}
 	}
+	if (added > 0 || bind) && !a.commit(next) {
+		return
+	}
+	skipped := len(result.Nodes) - added
+	text := fmt.Sprintf("%d 个节点已存在，没有重复导入", skipped)
+	if added > 0 {
+		text = fmt.Sprintf("已导入 %d 个至「%s」，跳过 %d 个重复节点", added, name, skipped)
+	}
+	switch {
+	case bind:
+		text += "。以后在这个分组里点「更新订阅」就能同步"
+	case source != "":
+		text += "。分组里原来就有节点，订阅没绑到这里；想一键更新请导入到新分组"
+	}
+	a.showNotice(text)
+	a.closeImport()
+}
+
+func (a *application) closeImport() {
 	a.importing = false
 	a.importText, a.importObserved, a.importParsed = "", "", ""
 	a.importResult = importResult{}
+}
+
+// applySync 用订阅内容同步 group，返回是否成功（已是最新也算）
+func (a *application) applySync(group string, result importResult) bool {
+	label := nodeGroupName(Node{Group: group})
+	if len(result.Nodes) == 0 {
+		reason := "订阅里没有能用的节点"
+		if len(result.Issues) > 0 {
+			reason = result.Issues[0]
+		}
+		a.errorText = "更新「" + label + "」失败：" + reason
+		return false
+	}
+	next, added, updated, removed := syncGroup(a.settings, group, result.Nodes)
+	if added+updated+removed == 0 {
+		a.showNotice("「" + label + "」已是最新")
+		return true
+	}
+	if !a.commit(next) {
+		return false
+	}
+	text := fmt.Sprintf("已更新「%s」：新增 %d、更新 %d、移除 %d", label, added, updated, removed)
+	if len(result.Issues) > 0 {
+		text += fmt.Sprintf("，%d 条没认出来", len(result.Issues))
+	}
+	a.showNotice(text)
+	return true
+}
+
+// updateSubscription 重新拉 group 的订阅并同步。不占 busy，拉订阅时启动/停止照常能点
+func (a *application) updateSubscription(group string) {
+	source, ok := a.settings.Subscriptions[group]
+	if !ok || a.fetching {
+		return
+	}
+	a.fetching = true
+	go func() {
+		result := loadImport(source)
+		a.window.Update(func() {
+			a.fetching = false
+			if a.settings.Subscriptions[group] == source {
+				a.applySync(group, result)
+			}
+		})
+	}()
 }
 
 func (a *application) openImport() {

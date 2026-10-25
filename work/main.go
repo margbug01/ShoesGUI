@@ -23,6 +23,7 @@ type application struct {
 	importNeedsTarget bool
 	importNew         bool
 	importNewName     string
+	fetching          bool // 正在拉订阅（更新订阅）
 	notice            string
 	noticeUntil       time.Time
 	addingGroup       bool

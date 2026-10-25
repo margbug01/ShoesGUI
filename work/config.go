@@ -42,14 +42,16 @@ type Node struct {
 }
 
 type Settings struct {
-	Groups      []string `json:",omitempty"`
-	Nodes       []Node
-	Selected    int
-	Kernel      string
-	Port        string
-	Mode        string // "" 规则，"global" 全局，"direct" 直连
-	AutoConnect bool
-	Theme       string // "" 跟随系统，"light"，"dark"
+	Groups []string `json:",omitempty"`
+	// Subscriptions 分组 → 订阅地址，「更新订阅」照它重新拉。未分组的键是 ""
+	Subscriptions map[string]string `json:",omitempty"`
+	Nodes         []Node
+	Selected      int
+	Kernel        string
+	Port          string
+	Mode          string // "" 规则，"global" 全局，"direct" 直连
+	AutoConnect   bool
+	Theme         string // "" 跟随系统，"light"，"dark"
 }
 
 // 内核里的组名。节点名不能和它们重复
