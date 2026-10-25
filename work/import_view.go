@@ -5,7 +5,6 @@ import (
 	"maps"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -338,13 +337,10 @@ func importable(text string) bool {
 
 func (a *application) importView(c *ui.Context) {
 	muted := c.Theme().TextMuted
-	groups := []string{"未分组"}
-	for name := range groupCounts(a.settings) {
-		if name != "未分组" && name != "全部" {
-			groups = append(groups, name)
-		}
+	groups := orderedGroups(a.settings)
+	if !slices.Contains(groups, "未分组") {
+		groups = append(groups, "未分组")
 	}
-	sort.Strings(groups[1:])
 	group(c, "", func() {
 		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
 			ui.Text(c, "节点链接或订阅地址").FontSize(14)

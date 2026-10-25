@@ -1,10 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
+	"math"
 	"net"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -61,14 +64,20 @@ func groupCounts(settings Settings) map[string]int {
 	return counts
 }
 
+// groupNameError 新分组名不合法的原因；except 是正在改名的那个旧名字，和它一样不算重名
+func (a *application) groupNameError(name, except string) string {
+	if name == "" || name == "全部" || name == "未分组" {
+		return "请输入分组名称，不能使用「全部」或「未分组」"
+	}
+	if _, exists := groupCounts(a.settings)[name]; exists && name != except {
+		return "这个分组已经存在"
+	}
+	return ""
+}
+
 func (a *application) addGroup() {
 	name := strings.TrimSpace(a.groupDraft)
-	if name == "" || name == "全部" || name == "未分组" {
-		a.groupError = "请输入分组名称，不能使用「全部」或「未分组」"
-		return
-	}
-	if _, exists := groupCounts(a.settings)[name]; exists {
-		a.groupError = "这个分组已经存在"
+	if a.groupError = a.groupNameError(name, ""); a.groupError != "" {
 		return
 	}
 	next := a.settings
@@ -79,36 +88,144 @@ func (a *application) addGroup() {
 	}
 }
 
+// renameGroup 把分组 old 改成输入框里的名字，节点和订阅跟着走
+func (a *application) renameGroup(old string) {
+	name := strings.TrimSpace(a.groupDraft)
+	if a.groupError = a.groupNameError(name, old); a.groupError != "" {
+		return
+	}
+	next := a.settings
+	next.Groups = slices.Clone(next.Groups)
+	if i := slices.Index(next.Groups, old); i >= 0 {
+		next.Groups[i] = name
+	} else {
+		next.Groups = append(next.Groups, name)
+	}
+	next.Nodes = slices.Clone(next.Nodes)
+	for i := range next.Nodes {
+		if next.Nodes[i].Group == old {
+			next.Nodes[i].Group = name
+		}
+	}
+	if source, ok := next.Subscriptions[old]; ok {
+		next.Subscriptions = maps.Clone(next.Subscriptions)
+		delete(next.Subscriptions, old)
+		next.Subscriptions[name] = source
+	}
+	if a.save(next) {
+		a.nodeGroup = name
+		a.renaming, a.groupDraft, a.groupError = "", "", ""
+	}
+}
+
+// deleteGroup 删掉分组 name。withNodes 为 false 时里面的节点挪到未分组，否则一起删；正在用的节点还在就接着用
+func (a *application) deleteGroup(name string, withNodes bool) {
+	next := a.settings
+	next.Groups = slices.DeleteFunc(slices.Clone(next.Groups), func(g string) bool { return g == name })
+	if _, ok := next.Subscriptions[name]; ok {
+		next.Subscriptions = maps.Clone(next.Subscriptions)
+		delete(next.Subscriptions, name)
+	}
+	next.Nodes, next.Selected = nil, -1
+	removed := 0
+	for i, n := range a.settings.Nodes {
+		if n.Group == name {
+			if withNodes {
+				removed++
+				continue
+			}
+			n.Group, n.FromSub = "", false
+		}
+		if i == a.settings.Selected {
+			next.Selected = len(next.Nodes)
+		}
+		next.Nodes = append(next.Nodes, n)
+	}
+	if next.Selected < 0 && len(next.Nodes) > 0 {
+		next.Selected = 0
+	}
+	saved := false
+	if removed > 0 {
+		saved = a.commit(next)
+	} else {
+		saved = a.save(next)
+	}
+	if !saved {
+		return
+	}
+	a.groupDelete, a.nodeGroup = "", "全部"
+	if removed > 0 {
+		a.showNotice(fmt.Sprintf("已删除分组「%s」和里面的 %d 个节点", name, removed))
+	} else {
+		a.showNotice("已删除分组「" + name + "」")
+	}
+}
+
 func (a *application) moveNode(index int, group string) {
 	next := a.settings
 	next.Nodes = append([]Node(nil), next.Nodes...)
 	previous := next.Nodes[index].Group
-	if previous != "" {
-		found := false
-		for _, name := range next.Groups {
-			found = found || name == previous
-		}
-		if !found {
-			next.Groups = append(append([]string(nil), next.Groups...), previous)
-		}
+	if previous != "" && !slices.Contains(next.Groups, previous) {
+		next.Groups = append(append([]string(nil), next.Groups...), previous)
 	}
-	next.Nodes[index].Group = group
+	// 挪走就不归原来的订阅管了，也不能被目标分组的订阅更新删掉
+	next.Nodes[index].Group, next.Nodes[index].FromSub = group, false
 	a.save(next)
 }
 
-func (a *application) nodeGrid(c *ui.Context) {
-	counts := groupCounts(a.settings)
-	groups := make([]string, 0, len(counts))
-	for group := range counts {
-		groups = append(groups, group)
+// orderedGroups 分组标签的顺序：按建的先后，再是只在节点上出现过的，「未分组」固定放最后
+func orderedGroups(settings Settings) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if !seen[name] && name != "未分组" {
+			seen[name] = true
+			out = append(out, name)
+		}
 	}
-	sort.Strings(groups)
-	groups = append([]string{"全部"}, groups...)
-	_, groupExists := counts[a.nodeGroup]
-	if a.nodeGroup == "" || (a.nodeGroup != "全部" && !groupExists) {
-		a.nodeGroup = "全部"
+	for _, name := range settings.Groups {
+		add(name)
 	}
-	ui.TextInput(c.Key("search-nodes"), &a.nodeSearch).FillWidth().Placeholder("搜索节点")
+	ungrouped := false
+	for _, n := range settings.Nodes {
+		add(nodeGroupName(n))
+		ungrouped = ungrouped || n.Group == ""
+	}
+	if ungrouped {
+		out = append(out, "未分组")
+	}
+	return out
+}
+
+// byDelay 按延迟从快到慢排，没测过的在后面，超时的最后；同样的保持原来的先后
+func byDelay(indices []int, names []string, delays map[string]int) []int {
+	rank := func(i int) int {
+		ms, ok := delays[names[i]]
+		switch {
+		case !ok || ms == 0:
+			return math.MaxInt - 1
+		case ms < 0:
+			return math.MaxInt
+		}
+		return ms
+	}
+	out := slices.Clone(indices)
+	slices.SortStableFunc(out, func(x, y int) int { return cmp.Compare(rank(x), rank(y)) })
+	return out
+}
+
+// fastest indices 里测出来最快的那个
+func fastest(indices []int, names []string, delays map[string]int) (int, bool) {
+	best, bestMS := -1, 0
+	for _, i := range indices {
+		if ms := delays[names[i]]; ms > 0 && (best < 0 || ms < bestMS) {
+			best, bestMS = i, ms
+		}
+	}
+	return best, best >= 0
+}
+
+func (a *application) groupTabs(c *ui.Context, groups []string, counts map[string]int) {
 	ui.Row(c).FillWidth().Wrap().Gap(6).Padding(4, 0, 8, 0).Children(func() {
 		for _, group := range groups {
 			count := counts[group]
@@ -124,6 +241,17 @@ func (a *application) nodeGrid(c *ui.Context) {
 			} else if tab.Hovered() {
 				tab.Background(c.Theme().SurfaceHover)
 			}
+			if group != "全部" && group != "未分组" {
+				tab.Tooltip("右键可以重命名或删除").ContextMenu(func(m *ui.Menu) {
+					if m.Item("重命名").Chosen() {
+						a.renaming, a.groupDraft, a.groupError = group, group, ""
+						a.addingGroup, a.groupDelete = false, ""
+					}
+					if m.Item("删除分组").Chosen() {
+						a.groupDelete, a.renaming, a.addingGroup = group, "", false
+					}
+				})
+			}
 			tab.Children(func() {
 				color := c.Theme().TextMuted
 				if chosen {
@@ -137,24 +265,88 @@ func (a *application) nodeGrid(c *ui.Context) {
 			}
 		}
 		if ui.Button(c.Key("add-group"), "+ 新建分组").Clicked() {
-			a.addingGroup = true
-			a.groupError = ""
+			a.addingGroup, a.renaming, a.groupDelete = true, "", ""
+			a.groupDraft, a.groupError = "", ""
 		}
 	})
-	if a.addingGroup {
+	if a.addingGroup || a.renaming != "" {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.TextInput(c.Key("group-name"), &a.groupDraft).Grow(1).Placeholder("分组名称")
+			input := ui.TextInput(c.Key("group-name"), &a.groupDraft).Grow(1).Placeholder("分组名称").AutoFocus()
 			if ui.Button(c.Key("cancel-group"), "取消").Clicked() {
-				a.addingGroup, a.groupDraft, a.groupError = false, "", ""
+				a.addingGroup, a.renaming, a.groupDraft, a.groupError = false, "", "", ""
 			}
-			if ui.PrimaryButton(c.Key("create-group"), "创建分组").Clicked() {
-				a.addGroup()
+			action := "创建分组"
+			if a.renaming != "" {
+				action = "重命名"
+			}
+			if ui.PrimaryButton(c.Key("create-group"), action).Clicked() || input.Submitted() {
+				if a.renaming != "" {
+					a.renameGroup(a.renaming)
+				} else {
+					a.addGroup()
+				}
 			}
 		})
 		if a.groupError != "" {
 			ui.Text(c, a.groupError).FontSize(12).TextColor(c.Theme().Danger)
 		}
 	}
+	if name := a.groupDelete; name != "" {
+		n := counts[name]
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Padding(8, 12).Radius(9).Background(c.Theme().Danger.Alpha(0.08)).Children(func() {
+			text := "删除分组「" + name + "」？"
+			if n > 0 {
+				text = fmt.Sprintf("删除分组「%s」？里面有 %d 个节点", name, n)
+			}
+			ui.Text(c, text).FontSize(12).Grow(1).MinWidth(0)
+			if ui.Button(c.Key("cancel-group-delete"), "取消").Clicked() {
+				a.groupDelete = ""
+			}
+			if n > 0 {
+				if ui.Button(c.Key("group-delete-keep"), "节点挪到未分组").Clicked() {
+					a.deleteGroup(name, false)
+				}
+				if ui.Button(c.Key("group-delete-all"), "连节点一起删").TextColor(c.Theme().Danger).Clicked() {
+					a.deleteGroup(name, true)
+				}
+			} else if ui.Button(c.Key("group-delete-empty"), "删除").TextColor(c.Theme().Danger).Clicked() {
+				a.deleteGroup(name, false)
+			}
+		})
+	}
+}
+
+func (a *application) nodeGrid(c *ui.Context) {
+	counts := groupCounts(a.settings)
+	groups := append([]string{"全部"}, orderedGroups(a.settings)...)
+	_, groupExists := counts[a.nodeGroup]
+	if a.nodeGroup == "" || (a.nodeGroup != "全部" && !groupExists) {
+		a.nodeGroup = "全部"
+	}
+	names := kernelNames(a.settings.Nodes)
+	indices := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		search := ui.TextInput(c.Key("search-nodes"), &a.nodeSearch).Grow(1).Placeholder("搜索节点（Ctrl+F）").Label("搜索节点")
+		if a.focusSearch {
+			search.Focus()
+			a.focusSearch = false
+		}
+		sortIndex := 0
+		if a.sortByDelay {
+			sortIndex = 1
+		}
+		p, picked, changed := a.sortPick.bind(sortIndex)
+		ui.Segmented(c.Key("sort"), p, "默认顺序", "按延迟").Label("排序")
+		if changed {
+			a.sortByDelay = picked == 1
+		}
+		best, ok := fastest(indices, names, a.delays)
+		if ui.Button(c.Key("use-fastest"), "用最快的").Disabled(!ok || a.testing).Tooltip("切到这一组里测出来最快的节点").Clicked() && best != a.settings.Selected {
+			a.choose(best)
+			a.showNotice(fmt.Sprintf("已切到最快的「%s」（%d ms）", a.settings.Nodes[best].Name, a.delays[names[best]]))
+		}
+	})
+	a.groupTabs(c, groups, counts)
 	if group, ok := groupKey(a.nodeGroup); ok {
 		if source, ok := a.settings.Subscriptions[group]; ok {
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(0, 0, 8, 0).Children(func() {
@@ -173,7 +365,6 @@ func (a *application) nodeGrid(c *ui.Context) {
 			})
 		}
 	}
-	indices := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 	if len(indices) == 0 {
 		if len(a.settings.Nodes) == 0 {
 			ui.Column(c).Padding(16, 0).Gap(6).Children(func() {
@@ -185,7 +376,13 @@ func (a *application) nodeGrid(c *ui.Context) {
 		ui.Text(c, "没有匹配的节点").FontSize(13).TextColor(c.Theme().TextMuted).Padding(16, 0)
 		return
 	}
-	names := kernelNames(a.settings.Nodes)
+	if a.sortByDelay {
+		// 测速时结果一个个回来，顺序先别动，测完再排，免得卡片在手底下跳
+		if key := fmt.Sprint(indices); !a.testing || key != a.sortKey {
+			a.sortKey, a.sorted = key, byDelay(indices, names, a.delays)
+		}
+		indices = a.sorted
+	}
 	grid := ui.Grid(c.Key("node-grid")).FillWidth().Gap(8)
 	remove := -1 // 确认删除要等网格建完再删，不然这一帧后面的下标就错了
 	defer func() {
@@ -220,27 +417,34 @@ func (a *application) nodeGrid(c *ui.Context) {
 				}
 			}
 			menu := func(m *ui.Menu) {
-				if m.Item("真连接延迟").Disabled(a.testing).Chosen() {
-					a.testNodes([]int{index}, false)
-				}
-				if m.Item("TCPing").Disabled(a.testing).Chosen() {
-					a.testNodes([]int{index}, true)
-				}
-				for _, target := range groups[1:] {
-					if target == nodeGroupName(node) {
-						continue
-					}
-					if m.Item("移至分组：" + target).Chosen() {
-						name := target
-						if name == "未分组" {
-							name = ""
-						}
-						a.moveNode(index, name)
-					}
-				}
 				if m.Item("编辑").Chosen() {
 					a.beginEdit(index)
 				}
+				m.Submenu("测速", func(m *ui.Menu) {
+					if m.Item("真连接延迟").Disabled(a.testing).Chosen() {
+						a.testNodes([]int{index}, false)
+					}
+					if m.Item("TCPing").Disabled(a.testing).Chosen() {
+						a.testNodes([]int{index}, true)
+					}
+				})
+				var targets []string
+				for _, target := range groups[1:] {
+					if target != nodeGroupName(node) {
+						targets = append(targets, target)
+					}
+				}
+				if len(targets) > 0 {
+					m.Submenu("移至分组", func(m *ui.Menu) {
+						for _, target := range targets {
+							if m.Item(target).Chosen() {
+								name, _ := groupKey(target)
+								a.moveNode(index, name)
+							}
+						}
+					})
+				}
+				m.Separator()
 				if m.Item("删除").Chosen() {
 					a.editIndex = index
 					a.deleteConfirm = true
@@ -265,7 +469,7 @@ func (a *application) nodeGrid(c *ui.Context) {
 				}
 				more := ui.ButtonBase(c.Key("more")).Size(26, 30).Center().Radius(6).Label("更多操作").Tooltip("更多操作").Cursor(ui.CursorPointer)
 				if !card.Hovered() && !card.FocusWithin() {
-					more.Opacity(0)
+					more.Opacity(0.35) // 平时淡淡地在，让人知道卡片还能编辑、删除
 				}
 				if more.Hovered() {
 					more.Background(c.Theme().SurfaceHover)

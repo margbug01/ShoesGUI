@@ -27,6 +27,12 @@ type application struct {
 	notice         string
 	noticeUntil    time.Time
 	addingGroup    bool
+	renaming       string // 正在改名的分组
+	groupDelete    string // 正在确认删除的分组
+	sortByDelay    bool
+	sortKey        string // 上次排序时的节点集合，测速中集合没变就沿用 sorted
+	sorted         []int
+	focusSearch    bool
 	groupDraft     string
 	groupError     string
 	nodeGroup      string
@@ -63,8 +69,9 @@ type application struct {
 	// 下面这些是控件的跨帧绑定，见 choice
 	themePick, modePick     choice[int]
 	loginPick, autoPick     choice[bool]
+	closePick               choice[bool]
 	securityPick, extraPick choice[string]
-	logPick                 choice[int]
+	logPick, sortPick       choice[int]
 	logFilter               int         // 0 全部，1 只看重要（藏起连接异常）
 	dashOn                  atomic.Bool // 仪表盘正显示着，才去拉连接数
 }
@@ -121,6 +128,9 @@ func (a *application) choose(index int) {
 			a.engine.reload(next)
 			return
 		}
+		if !next.KeepConnections {
+			a.engine.closeConnections()
+		}
 		a.window.Update(func() { a.dash.route++ })
 	}()
 }
@@ -139,6 +149,9 @@ func (a *application) setMode(mode string) {
 		if a.engine.choose(groupDomestic, domestic) != nil || a.engine.choose(groupOther, other) != nil {
 			a.engine.reload(next)
 			return
+		}
+		if !next.KeepConnections {
+			a.engine.closeConnections()
 		}
 		a.window.Update(func() { a.dash.route++ })
 	}()
@@ -269,7 +282,9 @@ func (a *application) nodesView(c *ui.Context) {
 					next.Nodes = append([]Node(nil), next.Nodes...)
 					if a.editIndex < 0 {
 						next.Nodes = append(next.Nodes, a.draft)
-						next.Selected = len(next.Nodes) - 1
+						if next.Selected < 0 { // 只有第一个节点才自动用上，别把正在跑的流量切到没测过的新节点
+							next.Selected = len(next.Nodes) - 1
+						}
 					} else {
 						next.Nodes[a.editIndex] = a.draft
 					}

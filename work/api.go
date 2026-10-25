@@ -94,10 +94,12 @@ func (e *engine) call(method, path string, body, out any) error {
 	return json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(out)
 }
 
-// choose 切换选择组。只影响新连接，所以切完把现有连接断掉，浏览器会立刻按新节点重连
+// choose 切换选择组。只影响新连接，现有连接要不要断由调用的人决定（closeConnections）
 func (e *engine) choose(group, name string) error {
-	if err := e.call(http.MethodPut, "/proxies/"+url.PathEscape(group), map[string]string{"name": name}, nil); err != nil {
-		return err
-	}
-	return e.call(http.MethodDelete, "/connections", nil, nil)
+	return e.call(http.MethodPut, "/proxies/"+url.PathEscape(group), map[string]string{"name": name}, nil)
+}
+
+// closeConnections 断开所有现有连接，浏览器会马上按新的选择重连。下载、通话也会断
+func (e *engine) closeConnections() {
+	e.call(http.MethodDelete, "/connections", nil, nil)
 }

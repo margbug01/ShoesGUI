@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -150,5 +152,90 @@ func TestDeleteConfirmsOnTheCard(t *testing.T) {
 	}
 	if !strings.Contains(a.notice, "三号") {
 		t.Fatalf("no notice about the new selection: %q", a.notice)
+	}
+}
+
+func TestSortByDelayAndFastest(t *testing.T) {
+	names := []string{"a", "b", "c", "d", "e"}
+	delays := map[string]int{"a": -1, "b": 300, "d": 120, "e": 0}
+	if got := fmt.Sprint(byDelay([]int{0, 1, 2, 3, 4}, names, delays)); got != "[3 1 2 4 0]" {
+		t.Fatal("order:", got)
+	}
+	if best, ok := fastest([]int{0, 1, 2, 3, 4}, names, delays); !ok || best != 3 {
+		t.Fatal("fastest:", best)
+	}
+	if _, ok := fastest([]int{0, 2}, names, delays); ok {
+		t.Fatal("nothing tested should have no fastest")
+	}
+}
+
+func TestGroupOrderRenameAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), settings: defaultSettings(), engine: newEngine(dir), nodeGroup: "全部"}
+	a.settings.Groups = []string{"乙", "甲"}
+	a.settings.Nodes = []Node{{Name: "x"}, {Name: "y", Group: "甲"}, {Name: "z", Group: "丙", FromSub: true}, {Name: "w", Group: "甲"}}
+	a.settings.Selected = 3
+	a.settings.Subscriptions = map[string]string{"甲": "https://s"}
+	if got := fmt.Sprint(orderedGroups(a.settings)); got != "[乙 甲 丙 未分组]" {
+		t.Fatal("group order:", got)
+	}
+	a.groupDraft = "乙"
+	a.renameGroup("甲")
+	if a.groupError == "" {
+		t.Fatal("rename onto an existing group accepted")
+	}
+	a.groupDraft = "机场"
+	a.renameGroup("甲")
+	if a.settings.Nodes[1].Group != "机场" || a.settings.Subscriptions["机场"] != "https://s" || a.nodeGroup != "机场" || slices.Contains(a.settings.Groups, "甲") {
+		t.Fatalf("rename: %+v %v %v", a.settings.Nodes, a.settings.Subscriptions, a.settings.Groups)
+	}
+	a.deleteGroup("丙", false)
+	if a.settings.Nodes[2].Group != "" || a.settings.Nodes[2].FromSub {
+		t.Fatal("kept nodes must become plain ungrouped nodes")
+	}
+	a.deleteGroup("机场", true)
+	if len(a.settings.Nodes) != 2 || a.settings.Selected != 0 || len(a.settings.Subscriptions) != 0 {
+		t.Fatalf("delete with nodes: %d nodes, selected %d, subs %v", len(a.settings.Nodes), a.settings.Selected, a.settings.Subscriptions)
+	}
+}
+
+func TestNodeMenuIsGrouped(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), settings: defaultSettings(), engine: newEngine(dir), nodeGroup: "全部", delays: map[string]int{}}
+	a.settings.Nodes = []Node{sampleNode("Trojan"), sampleNode("Trojan")}
+	a.settings.Nodes[1].Group = "机场"
+	tester := ui.NewTester(func(c *ui.Context) { ui.Column(c).Fill().Children(func() { a.nodeGrid(c) }) }, 820, 620)
+	tester.Frame()
+	if err := tester.RightClick(a.settings.Nodes[0].Name); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if got := strings.Join(tester.Menu(), "|"); !strings.HasPrefix(got, "编辑|测速|移至分组") || !strings.HasSuffix(got, "删除") {
+		t.Fatal("menu:", got)
+	}
+	if err := tester.ChooseMenuItem("移至分组", "机场"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if a.settings.Nodes[0].Group != "机场" {
+		t.Fatal("move via submenu failed")
+	}
+}
+
+func TestNewNodeDoesNotStealSelection(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), settings: defaultSettings(), engine: newEngine(dir), nodeGroup: "全部", tab: "代理", delays: map[string]int{}}
+	a.settings.Nodes, a.settings.Selected = []Node{sampleNode("Trojan")}, 0
+	tester := ui.NewTester(a.view, 820, 2000)
+	a.beginEdit(-1)
+	a.draft = sampleNode("SOCKS5")
+	a.draft.Name = "新的"
+	tester.Frame()
+	if err := tester.Click("保存"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if len(a.settings.Nodes) != 2 || a.settings.Selected != 0 {
+		t.Fatalf("nodes %d, selected %d", len(a.settings.Nodes), a.settings.Selected)
 	}
 }

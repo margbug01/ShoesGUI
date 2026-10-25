@@ -159,14 +159,18 @@ func (a *application) view(c *ui.Context) {
 							if a.testing {
 								label = "测速中…"
 							}
-							iconButton(c.Key("test-nodes"), boltIcon, label, false, a.testing || len(visible) == 0).Menu(func(m *ui.Menu) {
-								if m.Item(fmt.Sprintf("真连接延迟（%d 个）", len(visible))).Chosen() {
+							// 点一下就测最常用的真连接延迟，TCPing 放右键
+							test := iconButton(c.Key("test-nodes"), boltIcon, label, false, a.testing || len(visible) == 0).Tooltip(label + "（右键可选 TCPing）").ContextMenu(func(m *ui.Menu) {
+								if m.Item(fmt.Sprintf("真连接延迟（%d 个）", len(visible))).Disabled(a.testing).Chosen() {
 									a.testNodes(visible, false)
 								}
-								if m.Item(fmt.Sprintf("TCPing（%d 个）", len(visible))).Chosen() {
+								if m.Item(fmt.Sprintf("TCPing（%d 个）", len(visible))).Disabled(a.testing).Chosen() {
 									a.testNodes(visible, true)
 								}
 							})
+							if test.Clicked() {
+								a.testNodes(visible, false)
+							}
 							if iconButton(c.Key("import-nodes"), pasteIcon, "粘贴导入", false, false).Clicked() {
 								a.openImport()
 							}
@@ -284,6 +288,15 @@ func (a *application) settingsView(c *ui.Context) {
 		if a.portError != "" {
 			ui.Text(c, a.portError).FontSize(12).TextColor(c.Theme().Danger).Padding(0, 0, 10, 0)
 		}
+		settingRow(c, "切换节点时断开现有连接", "断开后网页马上走新节点；关掉的话下载、通话不会被打断，新连接才走新节点", func() {
+			p, on, changed := a.closePick.bind(!a.settings.KeepConnections)
+			ui.Switch(c.Key("close-connections"), p)
+			if changed {
+				next := a.settings
+				next.KeepConnections = !on
+				a.save(next)
+			}
+		})
 	})
 	group(c, "高级", func() {
 		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {

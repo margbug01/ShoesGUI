@@ -54,6 +54,8 @@ type Settings struct {
 	AutoConnect   bool
 	Theme         string // "" 跟随系统，"light"，"dark"
 	TrayHinted    bool   `json:",omitempty"` // 第一次关窗口时提示过「还在托盘里」
+	// KeepConnections 切节点、切模式时不断开现有连接（默认断开，浏览器马上走新节点）
+	KeepConnections bool `json:",omitempty"`
 }
 
 // 内核里的组名。节点名不能和它们重复
