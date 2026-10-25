@@ -397,3 +397,47 @@ func TestBoundSubscriptionIsComplete(t *testing.T) {
 		t.Fatalf("group has %d of 2, total %d, selected %d", in, len(a.settings.Nodes), a.settings.Selected)
 	}
 }
+
+// 测速结果按节点配置记：两个同名节点（内核里一个叫「香港」一个叫「香港 2」），删掉前一个，后一个不能接手它的结果
+func TestDelaysDoNotJumpBetweenSameNamedNodes(t *testing.T) {
+	dir := t.TempDir()
+	nodes := parseImport("trojan://old@example.com:443#香港\ntrojan://new@example.com:443#香港").Nodes
+	nodes[0].Group, nodes[1].Group = "快车", "机场"
+	a := &application{settings: defaultSettings(), storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), engine: newEngine(dir), nodeGroup: "全部", delays: map[string]int{}}
+	a.settings.Nodes, a.settings.Selected = nodes, 1
+	a.delays[delayKeys(nodes)[0]] = 88 // 只测过快车那个
+	a.deleteGroup("快车", true)
+	a.saveDelays()
+	if ms, ok := a.delays[delayKeys(a.settings.Nodes)[0]]; ok || len(a.settings.Delays) != 0 {
+		t.Fatalf("机场「香港」inherited %d ms, saved %v", ms, a.settings.Delays)
+	}
+}
+
+// 更新订阅后这一组的测速清零（和 v2rayN 一样），别的分组的不动，存盘也跟着清
+func TestSubscriptionUpdateResetsDelays(t *testing.T) {
+	dir := t.TempDir()
+	sub := parseImport("trojan://a@example.com:443#一\ntrojan://b@example.com:443#二").Nodes
+	manual := Node{Name: "手动", Kind: "SOCKS5", Host: "manual.example", Port: "1080"}
+	a := &application{settings: defaultSettings(), storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), engine: newEngine(dir), nodeGroup: "全部", delays: map[string]int{}}
+	for i := range sub {
+		sub[i].Group, sub[i].FromSub = "机场", true
+	}
+	a.settings.Nodes, a.settings.Selected = append([]Node{manual}, sub...), 0
+	a.settings.Subscriptions = map[string]string{"机场": "https://sub.example/x"}
+	for _, key := range delayKeys(a.settings.Nodes) {
+		a.delays[key] = 120
+	}
+	a.saveDelays()
+	if !a.applySync("机场", importResult{Nodes: parseImport("trojan://a@example.com:443#一\ntrojan://b@example.com:443#二").Nodes}) {
+		t.Fatal("sync failed")
+	}
+	keys := delayKeys(a.settings.Nodes)
+	if a.delays[keys[0]] != 120 || len(a.settings.Delays) != 1 {
+		t.Fatalf("other group touched or not saved: %v", a.settings.Delays)
+	}
+	for i, n := range a.settings.Nodes {
+		if _, ok := a.delays[keys[i]]; ok && n.Group == "机场" {
+			t.Fatalf("「%s」kept its old delay after the update", n.Name)
+		}
+	}
+}

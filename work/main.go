@@ -61,7 +61,7 @@ type application struct {
 	portError      string
 	kernelFocus    bool // 上一帧输入框有没有焦点，失焦就保存
 	portFocus      bool
-	delays         map[string]int // 内核节点名 → 毫秒；0 测速中，-1 超时
+	delays         map[string]int // delayKeys（节点配置）→ 毫秒；0 测速中，-1 超时
 	testing        bool
 	quitting       bool
 	openAtLogin    bool
@@ -185,15 +185,15 @@ func (a *application) testNodes(indices []int, tcp bool) {
 		return
 	}
 	a.testing = true
-	all := kernelNames(a.settings.Nodes)
-	nodes, names := make([]Node, len(indices)), make([]string, len(indices))
+	all := delayKeys(a.settings.Nodes)
+	nodes, keys := make([]Node, len(indices)), make([]string, len(indices))
 	for k, i := range indices {
-		nodes[k], names[k] = a.settings.Nodes[i], all[i]
-		a.delays[names[k]] = 0
+		nodes[k], keys[k] = a.settings.Nodes[i], all[i]
+		a.delays[keys[k]] = 0
 	}
 	kernel := a.settings.Kernel
 	go func() {
-		report := func(k, ms int) { a.window.Update(func() { a.delays[names[k]] = ms }) }
+		report := func(k, ms int) { a.window.Update(func() { a.delays[keys[k]] = ms }) }
 		var err error
 		if tcp {
 			eachNode(len(nodes), func(k int) int { return tcping(nodes[k]) }, report)
@@ -202,9 +202,9 @@ func (a *application) testNodes(indices []int, tcp bool) {
 		}
 		a.window.Update(func() {
 			a.testing = false
-			for _, name := range names {
-				if a.delays[name] == 0 {
-					a.delays[name] = -1
+			for _, key := range keys {
+				if a.delays[key] == 0 {
+					a.delays[key] = -1
 				}
 			}
 			if err != nil {
@@ -222,12 +222,22 @@ func (a *application) saveDelays() {
 	}
 	next := a.settings
 	next.Delays = map[string]int{}
-	for _, name := range kernelNames(next.Nodes) {
-		if ms, ok := a.delays[name]; ok && ms != 0 {
-			next.Delays[name] = ms
+	for _, key := range delayKeys(next.Nodes) {
+		if ms, ok := a.delays[key]; ok && ms != 0 {
+			next.Delays[key] = ms
 		}
 	}
 	a.save(next)
+}
+
+// forgetDelays 清掉 group 里节点的测速结果（订阅刚更新过，旧数字不作数）
+func (a *application) forgetDelays(group string) {
+	for _, n := range a.settings.Nodes {
+		if n.Group == group {
+			delete(a.delays, nodeIdentity(n))
+		}
+	}
+	a.saveDelays()
 }
 
 func field(c *ui.Context, label string, value *string) {

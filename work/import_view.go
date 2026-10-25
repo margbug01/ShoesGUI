@@ -225,6 +225,9 @@ func (a *application) finishImport() {
 	if (added > 0 || bind) && !a.commit(next) {
 		return
 	}
+	if bind {
+		a.forgetDelays(target) // 订阅刚拉下来的都算没测过，别沿用别的分组里同一台服务器的旧数字
+	}
 	skipped := len(result.Nodes) - added
 	text := fmt.Sprintf("%d 个节点已存在，没有重复导入", skipped)
 	switch {
@@ -263,12 +266,14 @@ func (a *application) applySync(group string, result importResult) bool {
 	}
 	next, added, updated, removed := syncGroup(a.settings, group, result.Nodes)
 	if added+updated+removed == 0 {
-		a.showNotice("「" + label + "」已是最新")
+		a.forgetDelays(group) // 和 v2rayN 一样，更新过订阅这一组就得重新测
+		a.showNotice("「" + label + "」已是最新，测速结果已清空")
 		return true
 	}
 	if !a.commit(next) {
 		return false
 	}
+	a.forgetDelays(group)
 	text := fmt.Sprintf("已更新「%s」：新增 %d、更新 %d、移除 %d", label, added, updated, removed)
 	if len(result.Issues) > 0 {
 		text += fmt.Sprintf("，%d 条没认出来", len(result.Issues))

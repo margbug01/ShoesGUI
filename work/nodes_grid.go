@@ -197,10 +197,20 @@ func orderedGroups(settings Settings) []string {
 	return out
 }
 
+// delayKeys 测速结果按节点配置（地址、协议、凭证、传输）记，不按名字：内核名字重名时会加「 2」，
+// 删掉前一个后面的就改名，结果会张冠李戴；配置改了结果也自然作废
+func delayKeys(nodes []Node) []string {
+	keys := make([]string, len(nodes))
+	for i, n := range nodes {
+		keys[i] = nodeIdentity(n)
+	}
+	return keys
+}
+
 // byDelay 按延迟从快到慢排，没测过的在后面，超时的最后；同样的保持原来的先后
-func byDelay(indices []int, names []string, delays map[string]int) []int {
+func byDelay(indices []int, keys []string, delays map[string]int) []int {
 	rank := func(i int) int {
-		ms, ok := delays[names[i]]
+		ms, ok := delays[keys[i]]
 		switch {
 		case !ok || ms == 0:
 			return math.MaxInt - 1
@@ -215,10 +225,10 @@ func byDelay(indices []int, names []string, delays map[string]int) []int {
 }
 
 // fastest indices 里测出来最快的那个
-func fastest(indices []int, names []string, delays map[string]int) (int, bool) {
+func fastest(indices []int, keys []string, delays map[string]int) (int, bool) {
 	best, bestMS := -1, 0
 	for _, i := range indices {
-		if ms := delays[names[i]]; ms > 0 && (best < 0 || ms < bestMS) {
+		if ms := delays[keys[i]]; ms > 0 && (best < 0 || ms < bestMS) {
 			best, bestMS = i, ms
 		}
 	}
@@ -323,7 +333,7 @@ func (a *application) nodeGrid(c *ui.Context) {
 	if a.nodeGroup == "" || (a.nodeGroup != "全部" && !groupExists) {
 		a.nodeGroup = "全部"
 	}
-	names := kernelNames(a.settings.Nodes)
+	keys := delayKeys(a.settings.Nodes)
 	indices := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		search := ui.TextInput(c.Key("search-nodes"), &a.nodeSearch).Grow(1).Placeholder("搜索节点（Ctrl+F）").Label("搜索节点")
@@ -340,15 +350,15 @@ func (a *application) nodeGrid(c *ui.Context) {
 		if changed {
 			a.sortByDelay = picked == 1
 		}
-		best, ok := fastest(indices, names, a.delays)
+		best, ok := fastest(indices, keys, a.delays)
 		if ui.Button(c.Key("use-fastest"), "用最快的").Disabled(!ok || a.testing).Tooltip("切到这一组里测出来最快的节点").Clicked() && best != a.settings.Selected {
 			a.choose(best)
-			a.showNotice(fmt.Sprintf("已切到最快的「%s」（%d ms）", a.settings.Nodes[best].Name, a.delays[names[best]]))
+			a.showNotice(fmt.Sprintf("已切到最快的「%s」（%d ms）", a.settings.Nodes[best].Name, a.delays[keys[best]]))
 		}
 	})
 	a.groupTabs(c, groups, counts)
 	// 分组标签上能连节点一起删分组，节点列表可能这一帧刚变短；下面画卡片要按现在的重新算，拿上面的下标会越界崩掉
-	names, indices = kernelNames(a.settings.Nodes), visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
+	keys, indices = delayKeys(a.settings.Nodes), visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 	if group, ok := groupKey(a.nodeGroup); ok {
 		if source, ok := a.settings.Subscriptions[group]; ok {
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(0, 0, 8, 0).Children(func() {
@@ -381,7 +391,7 @@ func (a *application) nodeGrid(c *ui.Context) {
 	if a.sortByDelay {
 		// 测速时结果一个个回来，顺序先别动，测完再排，免得卡片在手底下跳
 		if key := fmt.Sprint(indices); !a.testing || key != a.sortKey {
-			a.sortKey, a.sorted = key, byDelay(indices, names, a.delays)
+			a.sortKey, a.sorted = key, byDelay(indices, keys, a.delays)
 		}
 		indices = a.sorted
 	}
@@ -461,7 +471,7 @@ func (a *application) nodeGrid(c *ui.Context) {
 								ui.Text(c, "✓").FontSize(14).FontWeight(700).TextColor(c.Theme().Accent).Shrink(0)
 							}
 							ui.Text(c, node.Name).FontSize(13).FontWeight(600).SingleLine().Grow(1)
-							delayBadge(c, a.delays, names[index])
+							delayBadge(c, a.delays, keys[index])
 						})
 						ui.Text(c, node.Kind+" · "+nodeGroupName(node)).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
 					})
@@ -518,8 +528,8 @@ func (a *application) deleteNode(index int) {
 }
 
 // delayBadge 显示延迟：0 表示测速中，-1 超时，没测过不显示
-func delayBadge(c *ui.Context, delays map[string]int, name string) {
-	ms, ok := delays[name]
+func delayBadge(c *ui.Context, delays map[string]int, key string) {
+	ms, ok := delays[key]
 	if !ok {
 		return
 	}

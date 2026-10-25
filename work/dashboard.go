@@ -371,10 +371,9 @@ func (a *application) nodeCard(c *ui.Context) {
 			a.addButtons(c, "dash")
 			return
 		}
-		name := kernelNames(a.settings.Nodes)[a.settings.Selected]
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, node.Name).FontSize(15).FontWeight(600).SingleLine().Grow(1)
-			delayPill(c, a.delays, name)
+			delayPill(c, a.delays, nodeIdentity(node))
 		})
 		ui.Text(c, nodeSummary(node)).FontSize(12).TextColor(t.TextMuted).SingleLine()
 		ui.Row(c).Gap(8).Padding(4, 0, 0, 0).Children(func() {
@@ -403,8 +402,8 @@ func (a *application) addButtons(c *ui.Context, key string) {
 	})
 }
 
-func delayPill(c *ui.Context, delays map[string]int, name string) {
-	ms, ok := delays[name]
+func delayPill(c *ui.Context, delays map[string]int, key string) {
+	ms, ok := delays[key]
 	if !ok {
 		return
 	}

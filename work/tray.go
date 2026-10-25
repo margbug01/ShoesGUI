@@ -82,7 +82,7 @@ func (a *application) createTray() {
 
 // trayNodes 托盘里切节点：一个分组一个子菜单（只有一组就直接列出来），带上次测的延迟
 func (a *application) trayNodes() []*mygo.MenuItem {
-	names := kernelNames(a.settings.Nodes)
+	keys := delayKeys(a.settings.Nodes)
 	groups := orderedGroups(a.settings)
 	var out []*mygo.MenuItem
 	for _, group := range groups {
@@ -92,7 +92,7 @@ func (a *application) trayNodes() []*mygo.MenuItem {
 				continue
 			}
 			index, label := i, n.Name
-			if ms := a.delays[names[i]]; ms > 0 {
+			if ms := a.delays[keys[i]]; ms > 0 {
 				label += fmt.Sprintf("    %d ms", ms)
 			}
 			items = append(items, &mygo.MenuItem{Label: label, Type: mygo.MenuItemRadio, Checked: a.settings.Selected == i,
