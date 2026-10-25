@@ -125,9 +125,8 @@ go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon resources/i
 work/              GUI 源码（Go + MyGo）
   resources/       应用图标、托盘图标、侧栏图标
   rules/           国内规则（geosite / geoip cn）
-outputs/           使用说明、验证记录、第三方许可证（exe 不进仓库）
+outputs/           使用说明、第三方许可证（exe 不进仓库）
 docs/              图标母版和 README 截图
-方案-对齐FlClash.md  设计方案
 ```
 
 ## 致谢
