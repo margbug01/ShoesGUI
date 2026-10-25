@@ -1,0 +1,4 @@
+.alma-snapshots/
+tmp/
+*.exe
+*.old.exe

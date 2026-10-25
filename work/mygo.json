@@ -1,0 +1,6 @@
+{
+  "name": "ShoesGUI",
+  "identifier": "dev.local.shoesgui",
+  "version": "0.1.0",
+  "out": "../outputs"
+}

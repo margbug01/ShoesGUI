@@ -1,0 +1,300 @@
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
+)
+
+var navIcons = []*ui.SVG{
+	ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16a7.5 7.5 0 1 1 15 0M12 16l3.5-4"/><circle cx="12" cy="16" r="1"/></svg>`)),
+	ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg>`)),
+	ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg>`)),
+	ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h10l3 3v15H3V3h2M8 8h8M8 12h8M8 16h5"/></svg>`)),
+}
+
+var boltIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></svg>`))
+
+var addIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`))
+
+func iconButton(c *ui.Context, icon *ui.SVG, label string, primary, disabled bool) ui.Element {
+	theme := c.Theme()
+	background, foreground := theme.Surface, theme.Text
+	if primary {
+		background, foreground = theme.Accent, theme.AccentText
+	}
+	button := ui.ButtonBase(c).Size(36, 36).Center().Radius(9).Background(background).Border(1, theme.Border).Label(label).Tooltip(label).Disabled(disabled).Cursor(ui.CursorPointer)
+	if button.Hovered() && !disabled {
+		if primary {
+			button.Background(theme.AccentHover)
+		} else {
+			button.Background(theme.SurfaceHover)
+		}
+	}
+	if disabled {
+		foreground = theme.TextMuted
+		button.Background(theme.SurfacePressed)
+	}
+	return button.Children(func() { ui.Icon(c, icon).Size(18, 18).TextColor(foreground) })
+}
+
+func group(c *ui.Context, title string, body func()) {
+	t := c.Theme()
+	if title != "" {
+		ui.Text(c, title).FontSize(12).TextColor(t.TextMuted).Padding(18, 4, 8, 4)
+	}
+	ui.Column(c).FillWidth().Padding(4, 16).Radius(12).Background(paneColor(t)).Border(1, paneBorder(t)).Shadow(0, 1, 2, 0, ui.RGBA(10, 20, 35, 0.03)).Children(body)
+}
+
+// choice 给分段按钮、开关、下拉框、输入框绑一个跨帧的变量。MyGo 在一帧建完之后才把点击和输入写回
+// 绑定的变量，绑每帧新建的局部变量的话，这次操作就丢了。v 绑给控件，shown 是上一帧摆出来的值，两者不同就是用户刚改过
+type choice[T comparable] struct{ v, shown T }
+
+// bind 每帧调用一次，current 是现在该显示的值。返回绑给控件的指针，以及用户刚选的值（changed 为 true 时）
+func (ch *choice[T]) bind(current T) (p *T, picked T, changed bool) {
+	if ch.v != ch.shown {
+		ch.shown = ch.v
+		return &ch.v, ch.v, true
+	}
+	ch.v, ch.shown = current, current
+	return &ch.v, current, false
+}
+
+func settingRow(c *ui.Context, title, description string, control func()) {
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(12, 0).Gap(16).Children(func() {
+		ui.Column(c).Grow(1).Gap(3).Children(func() {
+			ui.Text(c, title).FontSize(14)
+			if description != "" {
+				ui.Text(c, description).FontSize(12).TextColor(c.Theme().TextMuted)
+			}
+		})
+		control()
+	})
+}
+
+func (a *application) titleBar(c *ui.Context) {
+	ui.Row(c).FillWidth().Height(36).Shrink(0).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Grow(1).Height(36).DragWindow()
+		for _, b := range []struct {
+			label string
+			run   func()
+		}{{"–", a.window.Minimize}, {"✕", a.window.Close}} {
+			button := ui.ButtonBase(c.Key(b.label)).Size(46, 36).Center().Cursor(ui.CursorPointer)
+			if button.Hovered() {
+				button.Background(c.Theme().SurfaceHover)
+			}
+			if button.Children(func() { ui.Text(c, b.label).FontSize(13) }).Clicked() {
+				b.run()
+			}
+		}
+	})
+}
+
+func (a *application) view(c *ui.Context) {
+	registerFonts()
+	theme := *c.Theme()
+	theme.Font = "MiSans, system-ui"
+	mamiColors(&theme)
+	c.SetTheme(&theme)
+	status, logs, ready, proxy := a.engine.snapshot()
+	busy := a.busy.Load()
+	a.dashOn.Store(a.tab == "仪表盘")
+	ui.Row(c).Fill().AlignItems(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) { windowTexture(theme.Dark).draw(p, r, 0) }).Children(func() {
+		c.SetTheme(sidebarTheme(&theme))
+		ui.Column(c).Width(184).FillHeight().Draw(func(p *ui.Painter, r ui.Rect) {
+			p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y, W: 1, H: r.H}, paneBorder(&theme), 0)
+		}).Children(func() {
+			ui.Row(c).Padding(22, 20, 20, 20).Gap(10).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(28, 28).Radius(9).Background(theme.Accent).Center().Children(func() { ui.Text(c, "S").FontSize(17).FontWeight(600).TextColor(theme.AccentText) })
+				ui.Text(c, "Shoes").FontSize(15).FontWeight(600)
+			}).DragWindow()
+			ui.Sidebar(c, &a.tab, func() {
+				for i, label := range []string{"仪表盘", "代理", "设置", "日志"} {
+					item := ui.SidebarItem(c, label, navIcons[i], label).Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
+					if a.tab == label {
+						item.Background(c.Theme().SurfacePressed).Shadow(0, 1, 3, 0, ui.RGBA(10, 20, 35, 0.07)).FontWeight(600)
+					}
+				}
+			}).Grow(1)
+			ui.Text(c, "Shoes · 0.1").FontSize(11).TextColor(theme.TextMuted).Padding(18, 20)
+		})
+		c.SetTheme(&theme)
+		ui.Column(c).Grow(1).FillHeight().Children(func() {
+			a.titleBar(c)
+			ui.Scroll(c).FillWidth().Grow(1).Children(func() {
+				ui.Column(c.Key(a.tab)).FillWidth().Padding(0, 28, 20, 28).Gap(8).Children(func() {
+					title := a.tab
+					if a.tab == "代理" && a.importing {
+						title = "粘贴导入"
+					} else if a.tab == "代理" && a.editing {
+						title = "编辑节点"
+						if a.editIndex < 0 {
+							title = "添加节点"
+						}
+					}
+					ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(0, 0, 8, 0).Children(func() {
+						ui.Text(c, title).FontSize(21).FontWeight(600).Grow(1)
+						if a.tab == "仪表盘" {
+							a.dashboardHeader(c, status, ready, proxy, busy)
+						}
+						if a.tab == "日志" {
+							p, v, changed := a.logPick.bind(a.logFilter)
+							ui.Segmented(c.Key("log-filter"), p, "全部", "只看重要").Label("日志筛选")
+							if changed {
+								a.logFilter = v
+							}
+						}
+						if a.tab == "代理" && !a.editing && !a.importing {
+							visible := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
+							label := fmt.Sprintf("测速：%s %d 个", a.nodeGroup, len(visible))
+							if a.testing {
+								label = "测速中…"
+							}
+							iconButton(c.Key("test-nodes"), boltIcon, label, false, a.testing || len(visible) == 0).Menu(func(m *ui.Menu) {
+								if m.Item(fmt.Sprintf("真连接延迟（%d 个）", len(visible))).Chosen() {
+									a.testNodes(visible, false)
+								}
+								if m.Item(fmt.Sprintf("TCPing（%d 个）", len(visible))).Chosen() {
+									a.testNodes(visible, true)
+								}
+							})
+							if iconButton(c.Key("import-nodes"), pasteIcon, "粘贴导入", false, false).Clicked() {
+								a.openImport()
+							}
+							if iconButton(c.Key("add-node"), addIcon, "添加节点", false, false).Clicked() {
+								a.beginEdit(-1)
+							}
+						}
+					})
+					switch a.tab {
+					case "仪表盘":
+						a.dashboardView(c, ready, proxy, busy)
+					case "代理":
+						a.nodesView(c)
+					case "设置":
+						a.settingsView(c)
+					case "日志":
+						a.logView(c, logs)
+					}
+				})
+			})
+			if a.errorText != "" {
+				ui.Text(c, a.errorText).FontSize(12).TextColor(theme.Danger).Padding(8, 28, 16, 28)
+			}
+		})
+	})
+}
+
+var themes = []struct{ key, label string }{{"", "跟随系统"}, {"light", "浅色"}, {"dark", "深色"}}
+
+// applyTheme 测试里换掉：离屏测试没有主循环，SetSource 会一直等主线程
+var applyTheme = func(key string) { mygo.Theme.SetSource(themeSource(key)) }
+
+func themeSource(key string) mygo.ThemeSource {
+	switch key {
+	case "light":
+		return mygo.ThemeLight
+	case "dark":
+		return mygo.ThemeDark
+	}
+	return mygo.ThemeSystem
+}
+
+func (a *application) settingsView(c *ui.Context) {
+	group(c, "常规", func() {
+		settingRow(c, "主题", "", func() {
+			index := 0
+			for i, t := range themes {
+				if t.key == a.settings.Theme {
+					index = i
+				}
+			}
+			p, chosen, changed := a.themePick.bind(index)
+			ui.Segmented(c.Key("theme"), p, themes[0].label, themes[1].label, themes[2].label).Label("主题")
+			if changed {
+				next := a.settings
+				next.Theme = themes[chosen].key
+				if a.save(next) {
+					applyTheme(next.Theme)
+				}
+			}
+		})
+		settingRow(c, "开机启动", "登录 Windows 后在托盘待命", func() {
+			p, on, changed := a.loginPick.bind(a.openAtLogin)
+			ui.Switch(c.Key("open-at-login"), p)
+			if changed {
+				if err := mygo.App.SetOpenAtLogin(on); err != nil {
+					a.errorText = "无法设置开机启动"
+				} else {
+					a.openAtLogin = on
+				}
+			}
+		})
+		settingRow(c, "打开后自动启动", "打开 Shoes 时直接接管系统代理", func() {
+			p, on, changed := a.autoPick.bind(a.settings.AutoConnect)
+			ui.Switch(c.Key("auto-connect"), p)
+			if changed {
+				next := a.settings
+				next.AutoConnect = on
+				a.save(next)
+			}
+		})
+	})
+	group(c, "连接", func() {
+		settingRow(c, "本地端口", "HTTP / SOCKS5 共用，改完内核会重启", func() { ui.TextInput(c.Key("port"), &a.portDraft).Width(130) })
+	})
+	group(c, "内核", func() {
+		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
+			ui.Text(c, "Shoes 路径").FontSize(14)
+			ui.Row(c).FillWidth().Gap(8).Children(func() {
+				ui.TextInput(c.Key("kernel-path"), &a.kernelDraft).Grow(1).Placeholder("shoes.exe")
+				if ui.Button(c.Key("browse"), "选择").Clicked() {
+					paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.window, Title: "选择 shoes.exe", Filters: []mygo.FileFilter{{Name: "可执行文件", Extensions: []string{"exe"}}}})
+					if err != nil {
+						a.errorText = "无法打开文件"
+					} else if len(paths) > 0 {
+						a.kernelDraft = paths[0]
+					}
+				}
+			})
+		})
+	})
+	ui.Row(c).FillWidth().Padding(16, 0).Children(func() {
+		ui.Spacer(c)
+		if ui.PrimaryButton(c.Key("save-settings"), "保存").MinWidth(88).Clicked() {
+			if _, err := portNumber(a.portDraft); err != nil {
+				a.errorText = err.Error()
+			} else if a.kernelDraft != a.settings.Kernel || a.portDraft != a.settings.Port {
+				next := a.settings
+				next.Kernel, next.Port = a.kernelDraft, a.portDraft
+				a.commit(next)
+			}
+		}
+	})
+	ui.Text(c, "关闭窗口会缩到托盘，从托盘右键菜单退出。").FontSize(12).TextColor(c.Theme().TextMuted).Padding(0, 4)
+}
+
+// logView 最新的在上面。「只看重要」藏起连接异常，顶上说一句藏了多少
+func (a *application) logView(c *ui.Context, logs []logEntry) {
+	muted := c.Theme().TextMuted
+	hidden := 0
+	var shown []logEntry
+	for i := len(logs) - 1; i >= 0; i-- {
+		if a.logFilter == 1 && logs[i].conn != "" {
+			hidden += logs[i].count
+			continue
+		}
+		shown = append(shown, logs[i])
+	}
+	if hidden > 0 {
+		ui.Text(c, fmt.Sprintf("已藏起 %d 条连接异常：单条连接没正常收尾，不影响别的连接", hidden)).FontSize(12).TextColor(muted).Padding(0, 0, 4, 0)
+	}
+	if len(shown) == 0 && hidden == 0 {
+		ui.Text(c, "暂无日志").FontSize(13).TextColor(muted)
+	}
+	for _, entry := range shown {
+		ui.Text(c, entry.String()).FontSize(12).TextColor(muted)
+	}
+}
