@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -116,11 +117,13 @@ func (a *application) importReady(now time.Time) bool {
 		a.importResult = importResult{}
 		return false
 	}
-	return strings.TrimSpace(a.importText) != "" && a.importParsed != a.importText && !a.busy.Load() && now.Sub(a.importChanged) >= 600*time.Millisecond
+	return strings.TrimSpace(a.importText) != "" && a.importParsed != a.importText && !a.parsing && now.Sub(a.importChanged) >= 600*time.Millisecond
 }
 
+// parseImportAsync 识别粘贴的内容（订阅地址会联网读）。只出预览，导不导由人点「导入」决定。
+// 用自己的 parsing 标记，不占 busy，拉订阅时启动/停止照常能点
 func (a *application) parseImportAsync() {
-	if a.busy.Load() || strings.TrimSpace(a.importText) == "" {
+	if a.parsing || strings.TrimSpace(a.importText) == "" {
 		return
 	}
 	text := a.importText
@@ -129,18 +132,45 @@ func (a *application) parseImportAsync() {
 	a.importParsed = ""
 	a.importResult = importResult{}
 	a.errorText = ""
-	a.async(func() {
+	a.parsing = true
+	go func() {
 		result := loadImport(text)
 		a.window.Update(func() {
+			a.parsing = false
 			if a.importing && a.importText == text {
 				a.importResult = result
 				a.importParsed = text
-				if len(result.Nodes) > 0 && len(result.Issues) == 0 && !a.importNeedsTarget {
-					a.finishImport()
-				}
+				a.suggestTarget(result)
 			}
 		})
-	})
+	}()
+}
+
+// suggestTarget 订阅给个合适的去处：已经绑过的就回到那个分组（再导一次就是更新）；
+// 要导去的分组里已经有节点、绑不上订阅的，就建议新建一个以订阅域名命名的分组
+func (a *application) suggestTarget(result importResult) {
+	if result.Source == "" {
+		return
+	}
+	for group, source := range a.settings.Subscriptions {
+		if source == result.Source {
+			a.importNew, a.importTarget = false, nodeGroupName(Node{Group: group})
+			return
+		}
+	}
+	counts := groupCounts(a.settings)
+	if a.importNew || counts[a.importTarget] == 0 {
+		return
+	}
+	name := "订阅"
+	if u, err := url.Parse(result.Source); err == nil && u.Hostname() != "" {
+		name = u.Hostname()
+	}
+	base := name
+	for k := 2; counts[name] > 0 || name == "全部" || name == "未分组" || slices.Contains(a.settings.Groups, name); k++ {
+		name = fmt.Sprintf("%s %d", base, k)
+	}
+	a.importNew, a.importNewName = true, name
 }
 
 func (a *application) finishImport() {
@@ -257,8 +287,7 @@ func (a *application) updateSubscription(group string) {
 
 func (a *application) openImport() {
 	a.importTarget = a.nodeGroup
-	a.importNeedsTarget = a.nodeGroup == "" || a.nodeGroup == "全部"
-	if a.importNeedsTarget {
+	if a.nodeGroup == "" || a.nodeGroup == "全部" {
 		a.importTarget = "未分组"
 	}
 	a.importNew, a.importNewName = false, ""
@@ -269,70 +298,85 @@ func (a *application) openImport() {
 	a.importText = ""
 	a.importParsed = ""
 	a.importResult = importResult{}
-	a.importText = readClipboard()
+	if text := readClipboard(); importable(text) {
+		a.importText = text
+	}
 	a.importObserved = a.importText
 	a.importChanged = time.Now()
 }
 
-func (a *application) importView(c *ui.Context) {
-	if a.importNeedsTarget {
-		groups := []string{"未分组"}
-		for name := range groupCounts(a.settings) {
-			if name != "未分组" && name != "全部" {
-				groups = append(groups, name)
-			}
-		}
-		sort.Strings(groups[1:])
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "导入到").FontSize(13)
-			if a.importNew {
-				ui.TextInput(c.Key("import-new-group"), &a.importNewName).Width(240).Placeholder("新分组名称")
-				if ui.Button(c.Key("import-existing"), "选择已有分组").Clicked() {
-					a.importNew = false
-				}
-			} else {
-				ui.Select(c.Key("import-target"), &a.importTarget, groups).Width(240)
-				if ui.Button(c.Key("import-new"), "新建分组").Clicked() {
-					a.importNew = true
-				}
-			}
-		})
-	} else {
-		ui.Text(c, "将自动导入当前分组："+a.importTarget).FontSize(13)
+// linkSchemes 认得的节点链接开头（不支持的也算，好在预览里说清楚为什么不行）
+var linkSchemes = []string{"vless", "vmess", "ss", "trojan", "anytls", "socks", "socks5", "http", "https", "hysteria2", "hy2", "tuic"}
+
+// importable 剪贴板里是节点链接、Base64 订阅内容或订阅地址才自动填进来，
+// 免得把刚复制的密码之类原样摊在输入框里
+func importable(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
 	}
+	if subscriptionURL(text) {
+		return true
+	}
+	if !strings.Contains(text, "://") {
+		data, err := decodeBase64(text)
+		if err != nil {
+			return false
+		}
+		text = string(data)
+	}
+	for _, line := range strings.Fields(text) {
+		if scheme, _, ok := strings.Cut(line, "://"); ok && slices.Contains(linkSchemes, strings.ToLower(scheme)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *application) importView(c *ui.Context) {
+	muted := c.Theme().TextMuted
+	groups := []string{"未分组"}
+	for name := range groupCounts(a.settings) {
+		if name != "未分组" && name != "全部" {
+			groups = append(groups, name)
+		}
+	}
+	sort.Strings(groups[1:])
 	group(c, "", func() {
 		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
 			ui.Text(c, "节点链接或订阅地址").FontSize(14)
-			ui.TextArea(c.Key("import-text"), &a.importText).FillWidth().Height(140).Disabled(a.busy.Load()).Placeholder("支持多条链接、Base64 订阅内容和订阅 URL")
-			ui.Text(c, "VLESS · VMess · Shadowsocks · Trojan · AnyTLS · SOCKS5 · HTTP").FontSize(11).TextColor(c.Theme().TextMuted)
+			ui.TextArea(c.Key("import-text"), &a.importText).FillWidth().Height(140).Disabled(a.parsing).Placeholder("支持多条链接、Base64 订阅内容和订阅 URL")
+			ui.Text(c, "VLESS · VMess · Shadowsocks · Trojan · AnyTLS · SOCKS5 · HTTP").FontSize(11).TextColor(muted)
 		})
 	})
-	ui.Row(c).FillWidth().Padding(8, 0).Gap(8).Children(func() {
-		ui.Spacer(c)
-		if iconButton(c.Key("paste-again"), pasteIcon, "粘贴", false, a.busy.Load()).Clicked() {
+	ui.Row(c).FillWidth().Padding(8, 0).Gap(8).AlignItems(ui.Center).Children(func() {
+		switch {
+		case a.parsing:
+			ui.Text(c, "正在识别…订阅地址会联网读取").FontSize(12).TextColor(muted).Grow(1)
+		case strings.TrimSpace(a.importText) == "":
+			ui.Text(c, "粘贴后会自动识别，看过预览再点「导入」").FontSize(12).TextColor(muted).Grow(1)
+		case a.importParsed != a.importText:
+			ui.Text(c, "停下输入后自动识别…").FontSize(12).TextColor(muted).Grow(1)
+		default:
+			ui.Spacer(c)
+		}
+		if iconButton(c.Key("paste-again"), pasteIcon, "粘贴", false, a.parsing).Clicked() {
 			a.importText = readClipboard()
 			a.importParsed = ""
 			a.importResult = importResult{}
 		}
-		if ui.Button(c.Key("parse"), "重新识别").Disabled(a.busy.Load() || strings.TrimSpace(a.importText) == "").Clicked() {
+		if ui.Button(c.Key("parse"), "重新识别").Disabled(a.parsing || strings.TrimSpace(a.importText) == "").Clicked() {
 			a.parseImportAsync()
 		}
 	})
-	if a.busy.Load() {
-		ui.Text(c, "正在识别…订阅地址会自动联网读取").FontSize(12).TextColor(c.Theme().TextMuted)
-	} else if strings.TrimSpace(a.importText) == "" {
-		ui.Text(c, "具体分组内自动导入当前组；从「全部」进入时请选择归属后点导入").FontSize(12).TextColor(c.Theme().TextMuted)
-	} else if a.importParsed != a.importText {
-		ui.Text(c, "等待输入完成，随后自动识别…").FontSize(12).TextColor(c.Theme().TextMuted)
-	}
 	if a.importParsed != "" && a.importParsed == a.importText {
 		ui.Text(c, fmt.Sprintf("识别到 %d 个节点", len(a.importResult.Nodes))).FontSize(14).FontWeight(600)
 		for index, node := range a.importResult.Nodes {
 			if index == 8 {
-				ui.Text(c, fmt.Sprintf("另有 %d 个节点", len(a.importResult.Nodes)-8)).FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, fmt.Sprintf("另有 %d 个节点", len(a.importResult.Nodes)-8)).FontSize(12).TextColor(muted)
 				break
 			}
-			ui.Text(c, node.Name+" · "+node.Kind).FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Text(c, node.Name+" · "+node.Kind).FontSize(12).TextColor(muted)
 		}
 		for index, issue := range a.importResult.Issues {
 			if index == 8 {
@@ -342,18 +386,39 @@ func (a *application) importView(c *ui.Context) {
 			ui.Text(c, issue).FontSize(12).TextColor(c.Theme().Danger)
 		}
 	}
-	ui.Row(c).FillWidth().Padding(12, 0).Gap(8).Children(func() {
-		ui.Spacer(c)
-		if ui.Button(c.Key("cancel-import"), "取消").Disabled(a.busy.Load()).Clicked() {
-			a.importing = false
-			a.importText = ""
-			a.importParsed = ""
-			a.importResult = importResult{}
+	ui.Row(c).FillWidth().Padding(12, 0, 4, 0).AlignItems(ui.Center).Gap(8).Children(func() {
+		ui.Text(c, "导入到").FontSize(13)
+		if a.importNew {
+			ui.TextInput(c.Key("import-new-group"), &a.importNewName).Width(200).Placeholder("新分组名称")
+			if ui.Button(c.Key("import-existing"), "选已有分组").Clicked() {
+				a.importNew = false
+			}
+		} else {
+			ui.Select(c.Key("import-target"), &a.importTarget, groups).Width(200)
+			if ui.Button(c.Key("import-new"), "新建分组").Clicked() {
+				a.importNew = true
+			}
 		}
-		if ui.PrimaryButton(c.Key("confirm-import"), "导入").MinWidth(88).Disabled(a.importParsed != a.importText || len(a.importResult.Nodes) == 0).Clicked() {
+		ui.Spacer(c)
+		if ui.Button(c.Key("cancel-import"), "取消").Clicked() {
+			a.closeImport()
+		}
+		if ui.PrimaryButton(c.Key("confirm-import"), "导入").MinWidth(88).Disabled(a.parsing || a.importParsed != a.importText || len(a.importResult.Nodes) == 0).Clicked() {
 			a.finishImport()
 		}
 	})
+	if source := a.importResult.Source; source != "" && a.importParsed == a.importText {
+		hint := "订阅放进单独的分组，以后在分组里点「更新订阅」就能同步"
+		if a.importNew {
+			hint = "已建议新建分组：订阅单独一组，以后在分组里点「更新订阅」就能同步"
+		}
+		for group, bound := range a.settings.Subscriptions {
+			if bound == source && !a.importNew && a.importTarget == nodeGroupName(Node{Group: group}) {
+				hint = "这个订阅已经在「" + a.importTarget + "」里，导入会按订阅更新这个分组"
+			}
+		}
+		ui.Text(c, hint).FontSize(12).TextColor(muted)
+	}
 }
 
 // readClipboard 测试里换掉：离屏测试没有主循环，读剪贴板会一直等主线程

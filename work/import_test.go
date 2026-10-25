@@ -72,11 +72,11 @@ func TestImportAutoRecognition(t *testing.T) {
 	if !a.importReady(now.Add(time.Second)) {
 		t.Fatal("paste did not trigger recognition")
 	}
-	a.busy.Store(true)
+	a.parsing = true
 	if a.importReady(now.Add(time.Second)) {
 		t.Fatal("duplicate request while busy")
 	}
-	a.busy.Store(false)
+	a.parsing = false
 	a.importParsed = a.importText
 	a.importResult = parseImport(a.importText)
 	if a.importReady(now.Add(2 * time.Second)) {
@@ -276,5 +276,43 @@ func TestSubscriptionBindsAndReimportUpdates(t *testing.T) {
 	a.finishImport()
 	if _, bound := a.settings.Subscriptions[""]; bound {
 		t.Fatal("subscription bound to a group with manual nodes")
+	}
+}
+
+func TestClipboardOnlyPrefillsImportableText(t *testing.T) {
+	for text, want := range map[string]bool{
+		"trojan://secret@example.com:443#a":                     true,
+		"https://sub.example.com/api/v1/client?token=abc":       true,
+		base64.StdEncoding.EncodeToString([]byte("ss://x@h:1")): true,
+		"hunter2-my-password":                                   false,
+		"会议纪要：明天下午三点":                                           false,
+		"":                                                      false,
+		base64.StdEncoding.EncodeToString([]byte("just text")):  false,
+	} {
+		if got := importable(text); got != want {
+			t.Errorf("%q: got %v", text, got)
+		}
+	}
+}
+
+func TestSubscriptionSuggestsItsOwnGroup(t *testing.T) {
+	a := &application{settings: defaultSettings(), importTarget: "未分组"}
+	a.settings.Nodes = []Node{{Name: "手动"}}
+	a.suggestTarget(importResult{Source: "https://sub.example.com/x"})
+	if !a.importNew || a.importNewName != "sub.example.com" {
+		t.Fatalf("new group not suggested: %v %q", a.importNew, a.importNewName)
+	}
+	a.importNew, a.importTarget = false, "未分组"
+	a.settings.Subscriptions = map[string]string{"机场": "https://sub.example.com/x"}
+	a.suggestTarget(importResult{Source: "https://sub.example.com/x"})
+	if a.importNew || a.importTarget != "机场" {
+		t.Fatal("known subscription should go back to its group")
+	}
+	a.importTarget = "空组"
+	a.settings.Subscriptions = nil
+	a.settings.Groups = []string{"空组"}
+	a.suggestTarget(importResult{Source: "https://other.example/x"})
+	if a.importNew {
+		t.Fatal("an empty group can hold the subscription")
 	}
 }

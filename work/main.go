@@ -13,53 +13,53 @@ import (
 )
 
 type application struct {
-	importing         bool
-	importText        string
-	importParsed      string
-	importObserved    string
-	importChanged     time.Time
-	importResult      importResult
-	importTarget      string
-	importNeedsTarget bool
-	importNew         bool
-	importNewName     string
-	fetching          bool // 正在拉订阅（更新订阅）
-	notice            string
-	noticeUntil       time.Time
-	addingGroup       bool
-	groupDraft        string
-	groupError        string
-	nodeGroup         string
-	nodeSearch        string
-	revealSelected    bool // 下一帧把正在用的节点卡片滚进视野（仪表盘「切换节点」过来时）
-	advanced          bool
-	settings          Settings
-	engine            *engine
-	window            *mygo.Window
-	busy              atomic.Bool
-	tab               string
-	shownTab          string // 上一帧显示的页，换页时清掉报错
-	editing           bool
-	editIndex         int
-	draft             Node
-	errorText         string
-	deleteConfirm     bool
-	storageOK         bool
-	settingsPath      string
-	kernelDraft       string
-	portDraft         string
-	kernelError       string
-	portError         string
-	kernelFocus       bool // 上一帧输入框有没有焦点，失焦就保存
-	portFocus         bool
-	delays            map[string]int // 内核节点名 → 毫秒；0 测速中，-1 超时
-	testing           bool
-	quitting          bool
-	openAtLogin       bool
-	tray              *mygo.Tray
-	trayOn            bool
-	trayTip           string
-	dash              dashboard
+	importing      bool
+	importText     string
+	importParsed   string
+	importObserved string
+	importChanged  time.Time
+	importResult   importResult
+	importTarget   string
+	importNew      bool
+	importNewName  string
+	fetching       bool // 正在拉订阅（更新订阅）
+	parsing        bool // 粘贴导入正在识别（订阅地址要联网）
+	notice         string
+	noticeUntil    time.Time
+	addingGroup    bool
+	groupDraft     string
+	groupError     string
+	nodeGroup      string
+	nodeSearch     string
+	revealSelected bool // 下一帧把正在用的节点卡片滚进视野（仪表盘「切换节点」过来时）
+	advanced       bool
+	settings       Settings
+	engine         *engine
+	window         *mygo.Window
+	busy           atomic.Bool
+	tab            string
+	shownTab       string // 上一帧显示的页，换页时清掉报错
+	editing        bool
+	editIndex      int
+	draft          Node
+	errorText      string
+	deleteConfirm  bool
+	storageOK      bool
+	settingsPath   string
+	kernelDraft    string
+	portDraft      string
+	kernelError    string
+	portError      string
+	kernelFocus    bool // 上一帧输入框有没有焦点，失焦就保存
+	portFocus      bool
+	delays         map[string]int // 内核节点名 → 毫秒；0 测速中，-1 超时
+	testing        bool
+	quitting       bool
+	openAtLogin    bool
+	tray           *mygo.Tray
+	trayOn         bool
+	trayTip        string
+	dash           dashboard
 	// 下面这些是控件的跨帧绑定，见 choice
 	themePick, modePick     choice[int]
 	loginPick, autoPick     choice[bool]
