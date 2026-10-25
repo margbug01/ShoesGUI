@@ -337,19 +337,20 @@ func importBatch(settings Settings, incoming []Node, target string) (Settings, i
 	return next, added
 }
 
-// syncGroup 拿订阅的最新内容替换 group 里的节点：同名的就地换成新配置（位置不变），
-// 新名字加到最后，订阅里已经没有的删掉。正在用的节点还在就接着用它，没了就换成这个分组的第一个
+// syncGroup 拿订阅的最新内容替换 group 里来自订阅的节点：同名的就地换成新配置（位置不变），
+// 新名字加到最后，订阅里已经没有的删掉。手动加进这个分组的节点不动。
+// 正在用的节点还在就接着用它，没了就换成这个分组的第一个
 func syncGroup(settings Settings, group string, incoming []Node) (next Settings, added, updated, removed int) {
-	queue := map[string][]int{} // 名字 → 组里同名节点的下标，按先后
+	queue := map[string][]int{} // 名字 → 组里同名订阅节点的下标，按先后
 	for i, n := range settings.Nodes {
-		if n.Group == group {
+		if n.Group == group && n.FromSub {
 			queue[n.Name] = append(queue[n.Name], i)
 		}
 	}
 	replacement := map[int]Node{}
 	var fresh []Node
 	for _, n := range incoming {
-		n.Group = group
+		n.Group, n.FromSub = group, true
 		if q := queue[n.Name]; len(q) > 0 {
 			replacement[q[0]], queue[n.Name] = n, q[1:]
 		} else {
@@ -360,7 +361,7 @@ func syncGroup(settings Settings, group string, incoming []Node) (next Settings,
 	next.Nodes = nil
 	moved := map[int]int{}
 	for i, n := range settings.Nodes {
-		if n.Group == group {
+		if n.Group == group && n.FromSub {
 			r, ok := replacement[i]
 			if !ok {
 				removed++

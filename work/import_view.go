@@ -203,10 +203,13 @@ func (a *application) finishImport() {
 		}
 		return
 	}
-	// 订阅只绑到空分组：更新会删掉订阅里没有的节点，不能连带删掉手动加的
+	// 订阅只绑到空分组，免得订阅节点和原来手动加的混在一组、重名分不清
 	bind := source != "" && groupCounts(a.settings)[name] == 0
 	next, added := importBatch(a.settings, result.Nodes, target)
 	if bind {
+		for i := len(a.settings.Nodes); i < len(next.Nodes); i++ {
+			next.Nodes[i].FromSub = true
+		}
 		next.Subscriptions = maps.Clone(next.Subscriptions)
 		if next.Subscriptions == nil {
 			next.Subscriptions = map[string]string{}

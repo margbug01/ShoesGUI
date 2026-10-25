@@ -220,12 +220,13 @@ func TestTransportConfig(t *testing.T) {
 func TestSyncGroup(t *testing.T) {
 	node := func(name, group, password string) Node {
 		n := sampleNode("Trojan")
-		n.Name, n.Group, n.Password = name, group, password
+		n.Name, n.Group, n.Password, n.FromSub = name, group, password, group == "机场"
 		return n
 	}
 	s := defaultSettings()
-	s.Nodes = []Node{node("手动", "", "x"), node("香港", "机场", "old"), node("日本", "机场", "old"), node("美国", "机场", "old")}
-	s.Selected = 2 // 日本
+	s.Nodes = []Node{node("手动", "", "x"), node("香港", "机场", "old"), node("日本", "机场", "old"), node("美国", "机场", "old"), node("美国", "", "manual")}
+	s.Nodes[4].Group = "机场" // 手动挪进来的，同名也不能被订阅改掉或删掉
+	s.Selected = 2          // 日本
 	next, added, updated, removed := syncGroup(s, "机场", []Node{node("日本", "", "new"), node("香港", "", "old"), node("新加坡", "", "new")})
 	if added != 1 || updated != 1 || removed != 1 {
 		t.Fatalf("added %d updated %d removed %d", added, updated, removed)
@@ -234,7 +235,7 @@ func TestSyncGroup(t *testing.T) {
 	for _, n := range next.Nodes {
 		names = append(names, n.Name+"/"+n.Group+"/"+n.Password)
 	}
-	if strings.Join(names, ",") != "手动//x,香港/机场/old,日本/机场/new,新加坡/机场/new" {
+	if strings.Join(names, ",") != "手动//x,香港/机场/old,日本/机场/new,美国/机场/manual,新加坡/机场/new" {
 		t.Fatal(names)
 	}
 	if next.Nodes[next.Selected].Name != "日本" {
@@ -245,7 +246,7 @@ func TestSyncGroup(t *testing.T) {
 	if next.Nodes[next.Selected].Name != "香港" {
 		t.Fatal("removed selection should fall back to the group", next.Selected)
 	}
-	if len(s.Nodes) != 4 || s.Nodes[2].Password != "old" {
+	if len(s.Nodes) != 5 || s.Nodes[2].Password != "old" {
 		t.Fatal("input settings were modified")
 	}
 }

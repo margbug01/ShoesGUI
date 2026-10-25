@@ -14,6 +14,7 @@ import (
 
 type Node struct {
 	Group       string
+	FromSub     bool `json:",omitempty"` // 来自分组绑定的订阅，「更新订阅」只动这些
 	Network     string
 	Reality     bool
 	PublicKey   string
