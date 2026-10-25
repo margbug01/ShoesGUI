@@ -191,6 +191,19 @@ func (e *engine) restart(s Settings) {
 	}
 }
 
+// portFree 先试着占一下本地端口：内核自己报的是「以一种访问权限不允许的方式…」，看不出是谁占了
+func portFree(port string) error {
+	l, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", port))
+	if err == nil {
+		l.Close()
+		return nil
+	}
+	if owner := portOwner(port); owner != "" {
+		return fmt.Errorf("本地端口 %s 已被 %s 占用，去设置换个端口，或先关掉它", port, owner)
+	}
+	return fmt.Errorf("本地端口 %s 用不了（被占用或被系统保留），去设置换个端口", port)
+}
+
 func freePort() (int, error) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -305,6 +318,9 @@ func connLine(line string) (string, bool) {
 func (e *engine) launch(s Settings) error {
 	e.event("正在启动", "启动内核")
 	if err := validKernel(s.Kernel); err != nil {
+		return err
+	}
+	if err := portFree(s.Port); err != nil {
 		return err
 	}
 	rules, err := ensureRules(e.dir)

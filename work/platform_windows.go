@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -304,4 +306,49 @@ func assignJob(job windows.Handle, pid int) error {
 	}
 	defer windows.CloseHandle(process)
 	return windows.AssignProcessToJobObject(job, process)
+}
+
+var getExtendedTcpTable = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")
+
+// portOwner 找在 port 上监听的进程名（IPv4），找不到返回空
+func portOwner(port string) string {
+	want, err := strconv.Atoi(port)
+	if err != nil {
+		return ""
+	}
+	var size uint32
+	getExtendedTcpTable.Call(0, uintptr(unsafe.Pointer(&size)), 0, windows.AF_INET, 3, 0) // 3 = TCP_TABLE_OWNER_PID_LISTENER
+	if size == 0 {
+		return ""
+	}
+	buf := make([]byte, size)
+	if r, _, _ := getExtendedTcpTable.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0, windows.AF_INET, 3, 0); r != 0 {
+		return ""
+	}
+	n := binary.LittleEndian.Uint32(buf)
+	for i := uint32(0); i < n; i++ {
+		row := buf[4+i*24:]
+		if len(row) < 24 {
+			break
+		}
+		// MIB_TCPROW_OWNER_PID：state, localAddr, localPort（网络字节序）, remoteAddr, remotePort, pid
+		if int(binary.BigEndian.Uint16(row[8:10])) == want {
+			return processName(binary.LittleEndian.Uint32(row[20:24]))
+		}
+	}
+	return ""
+}
+
+func processName(pid uint32) string {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return fmt.Sprintf("进程 %d", pid)
+	}
+	defer windows.CloseHandle(h)
+	name := make([]uint16, windows.MAX_PATH)
+	size := uint32(len(name))
+	if windows.QueryFullProcessImageName(h, 0, &name[0], &size) != nil {
+		return fmt.Sprintf("进程 %d", pid)
+	}
+	return filepath.Base(windows.UTF16ToString(name[:size]))
 }
