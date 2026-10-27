@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-//go:embed resources/logo.png
+//go:embed assets/logo.png
 var logoPNG []byte
 
 // logo 侧栏左上角的应用图标，96px 的图显示成 28，高分屏也清楚
@@ -145,7 +145,8 @@ func (a *application) view(c *ui.Context) {
 					}
 				}
 			}).Grow(1)
-			ui.Text(c, "Shoes · 0.2").FontSize(11).TextColor(theme.TextMuted).Padding(18, 20)
+			a.updateBadge(c)
+			ui.Text(c, sidebarVersion()).FontSize(11).TextColor(theme.TextMuted).Padding(18, 20)
 		})
 		c.SetTheme(&theme)
 		ui.Column(c).Grow(1).FillHeight().Children(func() {
@@ -279,7 +280,7 @@ func (a *application) settingsView(c *ui.Context) {
 				}
 			}
 		})
-		settingRow(c, "开机时启动 Shoes", "登录 Windows 后待在托盘；接不接管代理看下一项", func() {
+		settingRow(c, "开机时启动 Shoes", "登录系统后待在托盘；接不接管代理看下一项", func() {
 			p, on, changed := a.loginPick.bind(a.openAtLogin)
 			ui.Switch(c.Key("open-at-login"), p)
 			if changed {
@@ -320,6 +321,7 @@ func (a *application) settingsView(c *ui.Context) {
 			}
 		})
 	})
+	a.updateSettings(c)
 	group(c, "高级", func() {
 		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
 			ui.Column(c).Gap(3).Children(func() {

@@ -60,6 +60,8 @@ type Settings struct {
 	KeepConnections bool `json:",omitempty"`
 	// Delays 上次测速的结果：delayKeys（节点配置）→ 毫秒，-1 超时。早先按内核节点名存的认不出来，下次存时清掉
 	Delays map[string]int `json:",omitempty"`
+	// SkipUpdateCheck 不自动检查更新（默认打开时和之后每 12 小时查一次）
+	SkipUpdateCheck bool `json:",omitempty"`
 }
 
 // 内核里的组名。节点名不能和它们重复

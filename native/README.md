@@ -29,7 +29,7 @@ Windows 必须在新克隆中保留 LF（上面的 `-c core.autocrlf=false` 会�
 
 构建成功后，退出 Shoes，先备份 `outputs/shoes.exe`，再将 `native/build/target/release/shoes.exe` 放到该位置。不要只更新 GUI，否则原版内核会拒绝 `hysteria2` 配置。GUI 的编译方法见主 README。
 
-macOS（Apple 芯片）需要 Xcode Command Line Tools、Git 和 Rust 1.95.0（`rustup toolchain install 1.95.0 --profile minimal`），不需要 CMake，也没有换行问题。在本仓库根目录执行上面同样的六条命令，产物是 `native/build/target/release/shoes`（Mach-O arm64）。把它复制到 `work/resources/darwin-arm64/shoes`，`mygo build` 会打进 `ShoesGUI.app/Contents/Resources/`；这个位置已加入 `.gitignore`，不进仓库。2026-10-27 在 macOS 上按此构建，`cargo +1.95.0 test --locked hysteria2 --lib` 14 项通过。
+macOS（Apple 芯片）需要 Xcode Command Line Tools、Git 和 Rust 1.95.0（`rustup toolchain install 1.95.0 --profile minimal`），不需要 CMake，也没有换行问题。在本仓库根目录执行上面同样的六条命令，产物是 `native/build/target/release/shoes`（Mach-O arm64）。把它复制到 `work/resources/darwin-arm64/shoes`，`mygo build` 会打进 `ShoesGUI.app/Contents/Resources/`。发版时 Windows 内核放在 `work/resources/windows-amd64/shoes.exe`，`mygo build` 会放到 `ShoesGUI.exe` 旁边，也会打进自动更新包。这两个位置都在 `.gitignore` 里，不进仓库。2026-10-27 在 macOS 上按此构建，`cargo +1.95.0 test --locked hysteria2 --lib` 14 项通过。
 
 ## 验证
 

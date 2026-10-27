@@ -71,11 +71,12 @@ type application struct {
 	trayOn         bool
 	trayTip        string
 	dash           dashboard
+	update         updater
 	// 下面这些是控件的跨帧绑定，见 choice
 	hy2SpeedPick            choice[float64]
 	themePick, modePick     choice[int]
 	loginPick, autoPick     choice[bool]
-	closePick               choice[bool]
+	closePick, updatePick   choice[bool]
 	securityPick, extraPick choice[string]
 	logPick, sortPick       choice[int]
 	logFilter               int         // 0 全部，1 只看重要（藏起连接异常）
@@ -392,6 +393,7 @@ func main() {
 	}
 	recoverKernels(dir)
 	e := newEngine(dir)
+	routeUpdates(e)
 	a := &application{settings: defaultSettings(), engine: e, tab: "仪表盘", storageOK: true, settingsPath: filepath.Join(dir, "settings.dpapi"), delays: map[string]int{}, nodeGroup: "全部", logFilter: 1}
 	if err := loadEncrypted(a.settingsPath, &a.settings); err != nil && !errors.Is(err, os.ErrNotExist) {
 		a.storageOK = false
@@ -420,8 +422,10 @@ func main() {
 		os.Remove(path)
 	}
 	e.event("", "Shoes 已启动")
+	a.update.enabled = mygo.Updater.Enabled()
+	resume := takeResume(dir, time.Now()) // 更新前接管着系统代理，重启后接着接管
 	if len(a.settings.Nodes) > 0 {
-		if a.settings.AutoConnect {
+		if a.settings.AutoConnect || resume {
 			s := a.settings
 			a.async(func() { e.connect(s) })
 		} else {
@@ -441,6 +445,9 @@ func main() {
 		a.window.OnHide(func() { a.dashOn.Store(false) })
 		go a.watchTraffic()
 		go a.watchConnections()
+		if a.update.enabled {
+			go a.watchUpdates()
+		}
 		stopTick := make(chan struct{})
 		a.window.OnClose(func(event *mygo.CloseEvent) {
 			if !a.quitting {

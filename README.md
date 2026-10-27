@@ -30,6 +30,8 @@
 
 **数据留在本机。** 节点和设置加密后存在本机：Windows 用 DPAPI，放在 `%APPDATA%\ShoesGUI`；macOS 用 AES-256-GCM，密钥放在登录钥匙串里，数据放在 `~/Library/Application Support/ShoesGUI`。改系统代理前先记一份恢复日志，就算程序意外退出，下次打开也会把原来的代理设置还回去。
 
+**更新点一下就好。** 有新版本时侧栏会提示，到「设置 › 更新」点「更新并重启」，Shoes 会下载、校验签名、替换文件，然后自己重新打开；更新前接管着系统代理的话，重新打开后接着接管。更新包都用发布者的私钥签过名，签名对不上就不装。下载走 Shoes 自己的内核（国内直连 GitHub 常常很慢），节点不通再直连。更新时只下载变动的部分，内核也跟着一起更新。0.2.0 及更早的版本要手动下载一次新版，之后就能在应用里更新。
+
 ## 截图
 
 <table>
@@ -128,6 +130,12 @@ shoes 内核在 Windows 上还不支持 TUN，所以界面上干脆没放这个�
 </details>
 
 <details>
+<summary>「设置 › 更新」说这一份不能自己更新？</summary>
+
+Shoes 要能改写自己所在的位置才能更新。直接从 dmg 里打开的、Windows 上放在 `Program Files` 这类没有写入权限的文件夹里的，都更新不了：macOS 上把 app 拖进「应用程序」再打开，Windows 上解压到自己的文件夹（比如桌面或 `D:\Shoes`）就行。自己用 `go build` 编的开发版也不能更新。
+</details>
+
+<details>
 <summary>macOS 说「无法打开」或「无法验证开发者」？</summary>
 
 app 没有 Apple 开发者签名，也没有经过公证，第一次打开会被系统拦下。点「完成」后到「系统设置 › 隐私与安全性」，在最下面点「仍要打开」；也可以在终端运行 `xattr -dr com.apple.quarantine /Applications/ShoesGUI.app` 再打开。
@@ -152,11 +160,13 @@ go vet ./...
 go build -trimpath -ldflags="-H windowsgui -s -w" -o ../outputs/ShoesGUI.exe .
 ```
 
-exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里，`go build` 会自动带上。图标母版是 [`docs/icon.svg`](docs/icon.svg)（托盘用的简化版是 `docs/icon-tray-*.svg`），改完导出成 `work/resources/` 下的 PNG，再重新生成 syso：
+这样编出来的是开发版，不会自动更新；发给别人用的版本按下面「发版」打包。
+
+exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里，`go build` 和 `mygo build` 都会自动带上。图标母版是 [`docs/icon.svg`](docs/icon.svg)（托盘用的简化版是 `docs/icon-tray-*.svg`），改完导出成 `work/assets/` 下的 PNG，再重新生成 syso：
 
 ```sh
 cd work
-go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon resources/icon.png --manifest gui \
+go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon assets/icon.png --manifest gui \
   --product-name Shoes --file-description Shoes --product-version 0.2.0 --file-version 0.2.0 --original-filename ShoesGUI.exe
 ```
 
@@ -173,16 +183,40 @@ go run github.com/egoist/mygo/cmd/mygo@v0.6.4 build
 
 产物在 `outputs/darwin-arm64/`：`ShoesGUI.app` 和 dmg。内核会打进 `ShoesGUI.app/Contents/Resources/shoes`，许可证也一起打进去；只想要 app 就加 `-skip-dmg`。没有配开发者证书时用的是 ad-hoc 签名，本机能直接用，发给别人要按上面常见问题里的办法放行。
 
-发版时一起改版本号：`work/mygo.json` 的 `version`、上面 syso 命令里的两个版本号、`work/pages.go` 侧栏的版本和 `work/import.go` 订阅 UA 里的版本。
+### 发版
+
+两个平台都在 Mac 上一次打出来。应用的自动更新只认用更新私钥签过名的包，所以发版必须用 `mygo build` 并带上私钥。
+
+1. 改版本号：`work/mygo.json` 的 `version`、上面 syso 命令里的两个版本号（重新生成 syso）、`work/import.go` 订阅 UA 里的版本。侧栏显示的版本直接读 `mygo.json`。
+2. 在 [`CHANGELOG.md`](CHANGELOG.md) 写好这个版本的一节，应用里「设置 › 更新」显示的更新说明就是它；缺这一节 `mygo build` 会停下。
+3. 两个内核放好（都不进仓库）：`work/resources/darwin-arm64/shoes` 和 `work/resources/windows-amd64/shoes.exe`。
+4. 打包：
+
+   ```sh
+   cd work
+   MYGO_UPDATER_PRIVATE_KEY="$(cat "$HOME/Library/Application Support/mygo/update-keys/ShoesGUI/mygo-update.key")" \
+     go run github.com/egoist/mygo/cmd/mygo@v0.6.4 build -platform darwin/arm64,windows/amd64
+   ```
+
+5. 在 GitHub 上建 `v<版本>` 的 Release，先存成草稿，把附件都传上去，确认后再发布并设为 Latest。应用读的是最新 Release 里的清单，草稿对它不可见，所以不会出现清单已经能读到、压缩包还没传完的情况。
+   - `outputs/darwin-arm64/`：dmg（改名为 `Shoes-v<版本>-macos-arm64.dmg`）、`shoesgui-<版本>-darwin-arm64.tar.gz`、`*.delta`、`update-darwin-arm64.json`
+   - `outputs/windows-amd64/`：把 `ShoesGUI.exe`、`shoes.exe`、`LICENSE`、`licenses/`、`使用说明.md` 放进 `Shoes/` 文件夹打成 `Shoes-v<版本>-windows-x64.zip`，另附单独的 `ShoesGUI.exe`；再加上 `shoesgui-<版本>-windows-amd64.tar.gz`、`*.delta`、`update-windows-amd64.json`
+
+`*.delta` 是从前几个版本到这一版的增量包，`mygo build` 会读已发布的版本自动做出来，应用更新时优先下载它，通常只有整包的零头。
+
+公钥写在 `work/mygo.json` 的 `updates` 里。私钥只放在发版的那台 Mac 上，权限 600，不进仓库。私钥丢了，已经装上的应用就收不到后续更新；被别人拿到，他就能给所有用户推任意代码。一定要另外在密码管理器里存一份。
 
 ```
 work/              GUI 源码（Go + MyGo）
-  resources/       应用图标、托盘图标、侧栏图标
-    darwin-arm64/  打进 macOS app 的内核（不进仓库）
+  assets/          应用图标、托盘图标、侧栏图标（编进程序里）
+  resources/       打包时放到程序旁边的文件
+    darwin-arm64/  macOS 内核（不进仓库）
+    windows-amd64/ Windows 内核（不进仓库）
   rules/           国内规则（geosite / geoip cn）
 native/            HY2 内核补丁、编译说明和测试脚本
 outputs/           使用说明、第三方许可证（exe 和 app 不进仓库）
 docs/              图标母版和 README 截图
+CHANGELOG.md       更新记录，也是应用里显示的更新说明
 ```
 
 ## 致谢

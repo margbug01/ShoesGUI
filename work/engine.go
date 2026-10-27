@@ -124,6 +124,13 @@ func (e *engine) runInfo() (gen int, since time.Time, port string) {
 	return e.gen, since, e.port
 }
 
+// localProxy 内核就绪时返回本地入口端口（HTTP / SOCKS5 共用）
+func (e *engine) localProxy() (string, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.port, e.ready && e.port != ""
+}
+
 func (e *engine) isReady() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()

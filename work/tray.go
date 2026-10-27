@@ -7,10 +7,10 @@ import (
 	"github.com/egoist/mygo"
 )
 
-//go:embed resources/tray-on.png
+//go:embed assets/tray-on.png
 var trayOnPNG []byte
 
-//go:embed resources/tray-off.png
+//go:embed assets/tray-off.png
 var trayOffPNG []byte
 
 // trayIcon 托盘图标：加粗的 S，已接管绿底、没接管灰底。和应用图标同一条 S，但去掉了虚线和点，16px 也认得出

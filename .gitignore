@@ -9,4 +9,5 @@ outputs/ShoesGUI
 # 本地开发记录，不公开
 outputs/验证结果.md
 work/resources/darwin-*/shoes
+work/resources/windows-*/shoes.exe
 work/shoesgui
