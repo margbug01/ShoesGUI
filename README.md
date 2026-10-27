@@ -4,11 +4,11 @@
 
 # Shoes
 
-一个顺手的 Windows 代理客户端
+一个顺手的 Windows / macOS 代理客户端
 
 给 [shoes](https://github.com/cfal/shoes) 内核做的原生图形界面：订阅一键更新、v2rayN 同款测速、规则分流、托盘常驻。
 
-![Windows 10 / 11](https://img.shields.io/badge/Windows-10%20%2F%2011-23272e?style=flat-square&logo=windows&logoColor=white) ![Go 1.27](https://img.shields.io/badge/Go-1.27-23272e?style=flat-square&logo=go&logoColor=white) ![shoes 0.3.4](https://img.shields.io/badge/kernel-shoes%200.3.4-4f8a6c?style=flat-square) ![MyGo](https://img.shields.io/badge/UI-MyGo-6a717c?style=flat-square) ![GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-4f8a6c?style=flat-square)
+![Windows 10 / 11](https://img.shields.io/badge/Windows-10%20%2F%2011-23272e?style=flat-square&logo=windows&logoColor=white) ![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-23272e?style=flat-square&logo=apple&logoColor=white) ![Go 1.27](https://img.shields.io/badge/Go-1.27-23272e?style=flat-square&logo=go&logoColor=white) ![shoes 0.3.4](https://img.shields.io/badge/kernel-shoes%200.3.4-4f8a6c?style=flat-square) ![MyGo](https://img.shields.io/badge/UI-MyGo-6a717c?style=flat-square) ![GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-4f8a6c?style=flat-square)
 
 <img src="docs/screenshots/hero.webp" width="860" alt="仪表盘，浅色和深色">
 
@@ -24,11 +24,11 @@
 
 **状态不骗人。** 网速曲线、本次流量、活动连接、内核内存、真实出口 IP 都在仪表盘上；没接管系统代理时，出口卡会直接告诉你浏览器现在是直连。
 
-**安静地待在托盘。** 关窗口只是收进托盘，右键能启动停止、切节点、切模式；图标灰色是没接管，绿色是接管中。
+**安静地待在托盘。** 关窗口只是收进托盘（macOS 上是顶部菜单栏），右键能启动停止、切节点、切模式；图标灰色是没接管，绿色是接管中。
 
 **日志说人话。** 常见的单条连接报错翻成中文、一分钟内合并计数，默认只看重要的，报错标红，能搜、能选中复制、能一键复制给别人看。
 
-**数据留在本机。** 节点和设置用 Windows DPAPI 加密，存在 `%APPDATA%\ShoesGUI`；改系统代理前先记一份恢复日志，就算程序意外退出，下次打开也会把原来的代理设置还回去。
+**数据留在本机。** 节点和设置加密后存在本机：Windows 用 DPAPI，放在 `%APPDATA%\ShoesGUI`；macOS 用 AES-256-GCM，密钥放在登录钥匙串里，数据放在 `~/Library/Application Support/ShoesGUI`。改系统代理前先记一份恢复日志，就算程序意外退出，下次打开也会把原来的代理设置还回去。
 
 ## 截图
 
@@ -53,8 +53,10 @@
 
 ## 快速开始
 
-1. 把 `ShoesGUI.exe` 和 shoes 内核 `shoes.exe`（0.3.4，Windows x64）放进同一个文件夹，双击 `ShoesGUI.exe`。
-2. 在「代理」页点剪贴板图标，或者直接按 `Ctrl+V`，粘贴订阅地址或节点链接。看一眼预览，点「导入」。
+1. 从 [Releases](https://github.com/margbug01/ShoesGUI/releases) 下载对应平台的包：
+   - **Windows**：`Shoes-<版本>-windows-x64.zip`，解压后双击 `ShoesGUI.exe`，shoes 内核 `shoes.exe` 已经放在旁边。
+   - **macOS**（Apple 芯片）：`Shoes-<版本>-macos-arm64.dmg`，把 ShoesGUI 拖进「应用程序」再打开，内核已经打包在 app 里。第一次打开被系统拦下，见下面的常见问题。
+2. 在「代理」页点剪贴板图标，或者直接按 `Ctrl+V`（macOS 是 `⌘V`），粘贴订阅地址或节点链接。看一眼预览，点「导入」。
 3. 点闪电图标测速，挑一个快的（或者点「用最快的」），回到「仪表盘」点「启动」。
 
 更细的说明在 [`outputs/使用说明.md`](outputs/使用说明.md)。
@@ -69,7 +71,7 @@
 | 分享与导出 | 单节点二维码 / 链接 · 分组或全部节点 TXT · 独立分享订阅地址 |
 | 出站模式 | 规则（局域网和国内直连）· 全局 · 直连，运行中随时切 |
 
-原生 HY2 测试版：配合本仓库 `native/` 补丁构建的 shoes 内核，可导入 `hy2://` / `hysteria2://`，通过 QUIC 转发 TCP 应用流量，无辅助进程。支持密码、SNI、SHA256 证书固定、连接复用、真连接测速和分享。下载带宽默认 100 Mbps，可在节点编辑中调整，0 为自动；填写过高不保证提速。无指纹的跳过证书验证会被拒绝。上游原版 0.3.4 不支持此出站，不能只更新 GUI。
+原生 HY2 测试版：配合本仓库 `native/` 补丁构建的 shoes 内核，可导入 `hy2://` / `hysteria2://`，通过 QUIC 转发 TCP 应用流量，无辅助进程。支持密码、SNI、SHA256 证书固定、连接复用、真连接测速和分享。下载带宽默认 100 Mbps，可在节点编辑中调整，0 为自动；填写过高不保证提速。无指纹的跳过证书验证会被拒绝。上游原版 0.3.4 不支持此出站，不能只更新 GUI。Releases 里 Windows 和 macOS 的包都已经带上这个内核。
 
 暂不支持：整份 Clash YAML / JSON 配置、gRPC、SS 插件、WebSocket Early Data、UDP 应用/TUN、TUIC 出站，以及 HY2 的 Salamander 混淆和端口跳跃。遇到这些会明确提示，不会悄悄降级。HY2 使用 UDP 传输，TCPing 会跳过它，请用真连接测速。
 
@@ -85,26 +87,26 @@
 
 ## 内存与渲染
 
-默认使用 MyGo 的软件渲染，避免小工具常驻 GPU 后端的额外开销，界面样式保持不变。2026-10-26 本机隔离测试（820×620、80 个假节点、连续刷新节点延迟）中，工作集从 GPU 路径约 97 MiB 降至软件路径约 56 MiB；这是同口径对照，不等同于任务管理器的专用工作集，实际占用随系统、DPI 和节点数量变化。
+默认使用 MyGo 的软件渲染，避免小工具常驻 GPU 后端的额外开销，界面样式保持不变。2026-10-26 Windows 本机隔离测试（820×620、80 个假节点、连续刷新节点延迟）中，工作集从 GPU 路径约 97 MiB 降至软件路径约 56 MiB；这是同口径对照，不等同于任务管理器的专用工作集，实际占用随系统、DPI 和节点数量变化。
 
 取舍：该测试的持续更新帧耗时中位数由约 3 ms 增至 16 ms，软件渲染并不保证高 DPI、快速滚动时与 GPU 同样流畅。需要 GPU 加速时，在启动前设置进程环境变量 `MYGO_GPU=1`；应用尊重显式配置，不改系统环境变量。切换需彻底退出再启动。
 
-开发复测（Git Bash，在 `work/`）：`SHOES_NATIVE_MEMORY=1 go test -v -count=1` 打开并自动关闭假数据测试窗口；加 `MYGO_GPU=1` 测 GPU，加 `MYGO_FRAME_STATS=all` 记录帧耗时。不会读取实际节点或接管系统代理。
+开发复测（仅 Windows，Git Bash，在 `work/`）：`SHOES_NATIVE_MEMORY=1 go test -v -count=1` 打开并自动关闭假数据测试窗口；加 `MYGO_GPU=1` 测 GPU，加 `MYGO_FRAME_STATS=all` 记录帧耗时。不会读取实际节点或接管系统代理。
 
 ## 快捷键
 
-| 按键 | 作用 |
-| --- | --- |
-| `Ctrl+F` | 搜索节点 |
-| `Ctrl+N` | 手动添加节点 |
-| `Ctrl+V` | 在代理页打开粘贴导入（输入框里照常是粘贴） |
+| Windows | macOS | 作用 |
+| --- | --- | --- |
+| `Ctrl+F` | `⌘F` | 搜索节点 |
+| `Ctrl+N` | `⌘N` | 手动添加节点 |
+| `Ctrl+V` | `⌘V` | 在代理页打开粘贴导入（输入框里照常是粘贴） |
 
 ## 常见问题
 
 <details>
 <summary>订阅在 v2rayN 里能用，导进来却是一堆奇怪的节点？</summary>
 
-很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。Shoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.1`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
+很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。Shoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.2`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
 </details>
 
 <details>
@@ -116,16 +118,32 @@
 <details>
 <summary>为什么没有 TUN 模式？</summary>
 
-shoes 内核在 Windows 上还不支持 TUN，所以界面上干脆没放这个开关。需要全局接管的程序，可以手动把代理设成 `127.0.0.1:10808`（HTTP 和 SOCKS5 共用一个端口）。
+shoes 内核在 Windows 上还不支持 TUN，所以界面上干脆没放这个开关，macOS 版也一样没有。需要全局接管的程序，可以手动把代理设成 `127.0.0.1:10808`（HTTP 和 SOCKS5 共用一个端口）。
 </details>
 
 <details>
 <summary>关了窗口它还在跑？</summary>
 
-对，关窗口只是收进托盘，第一次关的时候会弹通知提醒。要退出请右键托盘图标选「退出」，退出时会恢复原来的系统代理。
+对，关窗口只是收进托盘，第一次关的时候会弹通知提醒。要退出请右键托盘图标选「退出」，macOS 上也可以直接 `⌘Q` 或在程序坞里退出。退出时会恢复原来的系统代理。
+</details>
+
+<details>
+<summary>macOS 说「无法打开」或「无法验证开发者」？</summary>
+
+app 没有 Apple 开发者签名，也没有经过公证，第一次打开会被系统拦下。点「完成」后到「系统设置 › 隐私与安全性」，在最下面点「仍要打开」；也可以在终端运行 `xattr -dr com.apple.quarantine /Applications/ShoesGUI.app` 再打开。
+</details>
+
+<details>
+<summary>macOS 上接管系统代理会改哪些地方？</summary>
+
+用系统自带的 `networksetup`，改每个已启用网络服务的 HTTP / HTTPS 代理和例外列表（本机、`*.local`、局域网网段），同时关掉自动代理（PAC）。停止或退出时，只把 Shoes 改过、你之后没再动过的设置还原。原来就设了需要认证的代理时，会直接提示无法接管，不去改它。
 </details>
 
 ## 从源码构建
+
+一套代码两个平台：平台相关的部分在 `work/platform_windows.go` 和 `work/platform_darwin.go`，其余共用。HY2 内核的编译步骤见 [`native/README.md`](native/README.md)。
+
+### Windows
 
 ```sh
 cd work
@@ -139,14 +157,31 @@ exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里�
 ```sh
 cd work
 go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon resources/icon.png --manifest gui \
-  --product-name Shoes --file-description Shoes --product-version 0.1.0 --file-version 0.1.0 --original-filename ShoesGUI.exe
+  --product-name Shoes --file-description Shoes --product-version 0.2.0 --file-version 0.2.0 --original-filename ShoesGUI.exe
 ```
+
+### macOS
+
+```sh
+# 先按 native/README.md 编出 macOS 内核，放进 app 的资源目录
+cp native/build/target/release/shoes work/resources/darwin-arm64/shoes
+cd work
+go test ./...
+go vet ./...
+go run github.com/egoist/mygo/cmd/mygo@v0.6.4 build
+```
+
+产物在 `outputs/darwin-arm64/`：`ShoesGUI.app` 和 dmg。内核会打进 `ShoesGUI.app/Contents/Resources/shoes`，许可证也一起打进去；只想要 app 就加 `-skip-dmg`。没有配开发者证书时用的是 ad-hoc 签名，本机能直接用，发给别人要按上面常见问题里的办法放行。
+
+发版时一起改版本号：`work/mygo.json` 的 `version`、上面 syso 命令里的两个版本号、`work/pages.go` 侧栏的版本和 `work/import.go` 订阅 UA 里的版本。
 
 ```
 work/              GUI 源码（Go + MyGo）
   resources/       应用图标、托盘图标、侧栏图标
+    darwin-arm64/  打进 macOS app 的内核（不进仓库）
   rules/           国内规则（geosite / geoip cn）
-outputs/           使用说明、第三方许可证（exe 不进仓库）
+native/            HY2 内核补丁、编译说明和测试脚本
+outputs/           使用说明、第三方许可证（exe 和 app 不进仓库）
 docs/              图标母版和 README 截图
 ```
 

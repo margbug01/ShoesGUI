@@ -145,7 +145,7 @@ func (a *application) view(c *ui.Context) {
 					}
 				}
 			}).Grow(1)
-			ui.Text(c, "Shoes · 0.1").FontSize(11).TextColor(theme.TextMuted).Padding(18, 20)
+			ui.Text(c, "Shoes · 0.2").FontSize(11).TextColor(theme.TextMuted).Padding(18, 20)
 		})
 		c.SetTheme(&theme)
 		ui.Column(c).Grow(1).FillHeight().Children(func() {

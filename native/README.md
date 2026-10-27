@@ -29,6 +29,8 @@ Windows 必须在新克隆中保留 LF（上面的 `-c core.autocrlf=false` 会�
 
 构建成功后，退出 Shoes，先备份 `outputs/shoes.exe`，再将 `native/build/target/release/shoes.exe` 放到该位置。不要只更新 GUI，否则原版内核会拒绝 `hysteria2` 配置。GUI 的编译方法见主 README。
 
+macOS（Apple 芯片）需要 Xcode Command Line Tools、Git 和 Rust 1.95.0（`rustup toolchain install 1.95.0 --profile minimal`），不需要 CMake，也没有换行问题。在本仓库根目录执行上面同样的六条命令，产物是 `native/build/target/release/shoes`（Mach-O arm64）。把它复制到 `work/resources/darwin-arm64/shoes`，`mygo build` 会打进 `ShoesGUI.app/Contents/Resources/`；这个位置已加入 `.gitignore`，不进仓库。2026-10-27 在 macOS 上按此构建，`cargo +1.95.0 test --locked hysteria2 --lib` 14 项通过。
+
 ## 验证
 
 GUI 单测：在 `work/` 执行 `go test ./...` 和 `go vet ./...`。HY2 测试覆盖 URI、证书固定、拒绝未支持参数、分享往返、测速配置和离屏编辑控件。
