@@ -54,6 +54,16 @@ func configureKernel(cmd *exec.Cmd) {
 func (g kernelGroup) assign(pid int) error { return assignJob(windows.Handle(g), pid) }
 func (g kernelGroup) kill()                { windows.TerminateJobObject(windows.Handle(g), 1) }
 func (g kernelGroup) close()               { windows.CloseHandle(windows.Handle(g)) }
+
+// bundledKernel 旁边就是 ShoesGUI.exe，说明是某一份 Shoes 自带的内核
+func bundledKernel(path string) bool {
+	if !strings.EqualFold(filepath.Base(path), kernelName) {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(filepath.Dir(path), "ShoesGUI.exe"))
+	return err == nil
+}
+
 func kernelCandidates(executable string) []string {
 	return []string{filepath.Join(filepath.Dir(executable), kernelName)}
 }

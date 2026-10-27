@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -362,18 +363,40 @@ func (a *application) nodesView(c *ui.Context) {
 	a.nodeGrid(c)
 }
 
-func detectKernel() string {
-	executable, _ := os.Executable()
-	for _, candidate := range kernelCandidates(executable) {
-		if validKernel(candidate) == nil {
-			return candidate
+// chooseKernel 打开时决定用哪个内核。存下的路径失效了，或者是另一份 Shoes 自带的内核（比如先从 dmg、开发版打开过，
+// 之后换成「应用程序」里这一份，或者更新后），就改用这一份自带的；用户自己选的其他位置照旧。own 是这一份自带内核可能在的位置
+func chooseKernel(saved string, own []string, valid func(string) error, bundled func(string) bool, lookPath func() string) string {
+	mine := ""
+	for _, candidate := range own {
+		if valid(candidate) == nil {
+			mine = candidate
+			break
 		}
 	}
+	if saved != "" && valid(saved) == nil && (mine == "" || samePath(saved, mine) || !bundled(saved)) {
+		return saved
+	}
+	if mine != "" {
+		return mine
+	}
+	if found := lookPath(); found != "" {
+		return found
+	}
+	return saved // 哪儿都找不到，留着让设置页报「内核文件不存在」
+}
+
+// pathKernel 在 PATH 里找内核
+func pathKernel() string {
 	if path, err := exec.LookPath(kernelName); err == nil {
 		full, _ := filepath.Abs(path)
 		return full
 	}
 	return ""
+}
+
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	return a == b || (runtime.GOOS == "windows" && strings.EqualFold(a, b))
 }
 
 func configureRenderer() {
@@ -409,8 +432,16 @@ func main() {
 	for name, ms := range a.settings.Delays { // 上次的测速结果，重开也看得到
 		a.delays[name] = ms
 	}
-	if a.settings.Kernel == "" {
-		a.settings.Kernel = detectKernel()
+	executable, _ := os.Executable()
+	if kernel := chooseKernel(a.settings.Kernel, kernelCandidates(executable), validKernel, bundledKernel, pathKernel); kernel != a.settings.Kernel {
+		migrated := a.settings.Kernel != ""
+		a.settings.Kernel = kernel
+		if migrated { // 换掉的是存下的旧路径：记一笔，也存回去，免得每次打开都换一遍
+			e.event("", "内核改用这一份 Shoes 自带的："+kernel)
+			if a.storageOK {
+				saveEncrypted(a.settingsPath, a.settings)
+			}
+		}
 	}
 	a.kernelDraft, a.portDraft = a.settings.Kernel, a.settings.Port
 	applyTheme(a.settings.Theme)

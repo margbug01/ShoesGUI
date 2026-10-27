@@ -148,3 +148,17 @@ func TestDarwinKernelValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDarwinBundledKernel(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/Applications/ShoesGUI.app/Contents/Resources/shoes":     true,
+		"/Volumes/ShoesGUI/ShoesGUI.app/Contents/Resources/shoes": true,
+		"/Applications/ShoesGUI.app/Contents/MacOS/shoes":         false,
+		"/usr/local/bin/shoes":                                    false,
+		"/opt/Resources/shoes":                                    false,
+	} {
+		if got := bundledKernel(path); got != want {
+			t.Errorf("%s: got %v", path, got)
+		}
+	}
+}

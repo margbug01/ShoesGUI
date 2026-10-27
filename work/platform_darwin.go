@@ -45,6 +45,15 @@ func validKernel(path string) error {
 	}
 	return nil
 }
+
+// bundledKernel 是不是某个 .app 包里自带的内核
+func bundledKernel(path string) bool {
+	resources := filepath.Dir(path)
+	contents := filepath.Dir(resources)
+	return filepath.Base(path) == kernelName && filepath.Base(resources) == "Resources" &&
+		filepath.Base(contents) == "Contents" && strings.HasSuffix(filepath.Dir(contents), ".app")
+}
+
 func kernelCandidates(executable string) []string {
 	dir := filepath.Dir(executable)
 	return []string{filepath.Join(dir, kernelName), filepath.Join(dir, "..", "Resources", kernelName)}
