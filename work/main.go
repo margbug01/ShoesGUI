@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -428,6 +429,10 @@ func main() {
 		}
 	}
 	mygo.App.OnWindowAllClosed(func() {}) // 只剩托盘时接着跑
+	if runtime.GOOS == "darwin" {
+		// macOS 的 ⌘Q、程序坞退出、关机都走 App.Quit，要当真退出，不能被关窗缩托盘拦下
+		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting = true })
+	}
 	mygo.App.OnSecondInstance(func([]string, string) { a.showWindow() })
 	mygo.App.WhenReady(func() {
 		a.openAtLogin = mygo.App.OpenAtLogin()
