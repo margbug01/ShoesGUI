@@ -13,10 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
-
-	"golang.org/x/sys/windows"
 )
 
 // engine 管一个常驻内核：应用打开就跑，配置变了就重启；「启动/停止」只是接管和恢复系统代理
@@ -38,7 +35,7 @@ type engine struct {
 
 	cmd    *exec.Cmd
 	done   chan struct{}
-	job    windows.Handle
+	job    kernelGroup
 	config string
 	dir    string
 }
@@ -158,17 +155,6 @@ func (e *engine) worker() {
 	}
 }
 
-func validKernel(path string) error {
-	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Ext(path), ".exe") {
-		return errors.New("请选择 shoes Windows .exe 的绝对路径")
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return errors.New("内核文件不存在")
-	}
-	return nil
-}
-
 // restart 换内核时系统代理保持接管，新内核起不来才恢复
 func (e *engine) restart(s Settings) {
 	e.killKernel()
@@ -216,7 +202,7 @@ func freePort() (int, error) {
 // spawnKernel 写临时配置并启动内核。进程放进 job，GUI 不管怎么退出它都跟着结束。
 // 启动播报和配置错误走 stdout/stderr；日志写文件再跟读，因为内核写管道时会把中文系统错误变成问号。
 // 进程结束后调 flush，读完剩下的日志并删掉日志文件
-func spawnKernel(kernel, dir string, data []byte, out *kernelLog) (cmd *exec.Cmd, job windows.Handle, path string, flush func(), err error) {
+func spawnKernel(kernel, dir string, data []byte, out *kernelLog) (cmd *exec.Cmd, job kernelGroup, path string, flush func(), err error) {
 	file, err := os.CreateTemp(dir, "runtime-*.yaml")
 	if err != nil {
 		return nil, 0, "", nil, errors.New("无法创建临时配置")
@@ -229,25 +215,25 @@ func spawnKernel(kernel, dir string, data []byte, out *kernelLog) (cmd *exec.Cmd
 		os.Remove(path)
 		return nil, 0, "", nil, errors.New("临时配置写入失败")
 	}
-	job, err = newJob()
+	job, err = newKernelGroup(dir)
 	if err != nil {
 		os.Remove(path)
 		return nil, 0, "", nil, errors.New("无法创建内核进程")
 	}
 	cmd = exec.Command(kernel, "--no-reload", "-l", logPath, path)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	configureKernel(cmd)
 	cmd.Env = append(os.Environ(), "RUST_LOG=warn")
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.Dir = filepath.Dir(kernel)
 	if err := cmd.Start(); err != nil {
-		windows.CloseHandle(job)
+		job.close()
 		os.Remove(path)
 		return nil, 0, "", nil, errors.New("内核启动失败")
 	}
-	if err := assignJob(job, cmd.Process.Pid); err != nil {
+	if err := job.assign(cmd.Process.Pid); err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()
-		windows.CloseHandle(job)
+		job.close()
 		os.Remove(path)
 		os.Remove(logPath)
 		return nil, 0, "", nil, errors.New("无法管理内核进程")
@@ -411,8 +397,8 @@ func (e *engine) killKernel() {
 	e.ready = false
 	e.mu.Unlock()
 	if e.job != 0 {
-		windows.TerminateJobObject(e.job, 1)
-		windows.CloseHandle(e.job)
+		e.job.kill()
+		e.job.close()
 		e.job = 0
 	}
 	if e.cmd != nil {

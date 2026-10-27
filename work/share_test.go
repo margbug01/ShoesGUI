@@ -233,7 +233,7 @@ func TestSharePage(t *testing.T) {
 			}
 		}
 	}
-	tester.Key(ui.Ctrl, ui.KeyF)
+	tester.Key(ui.Cmd, ui.KeyF)
 	tester.Frame()
 	tester.Frame()
 	if a.share != nil {
@@ -242,7 +242,7 @@ func TestSharePage(t *testing.T) {
 	a.openShare([]Node{node}, "", node.Name)
 	tester.Frame()
 	tester.Frame()
-	tester.Key(ui.Ctrl, ui.KeyN)
+	tester.Key(ui.Cmd, ui.KeyN)
 	tester.Frame()
 	tester.Frame()
 	if a.share != nil || !a.editing {

@@ -76,3 +76,20 @@ func TestProxyJournalFailureDoesNotTouchRegistry(t *testing.T) {
 		t.Fatal("journal failure did not prevent mutation")
 	}
 }
+
+func TestRestorePlanPreservesExternalChanges(t *testing.T) {
+	before := desiredProxy("9000")
+	before["AutoConfigURL"] = stringReg("http://old.invalid/proxy.pac")
+	owned := desiredProxy("10808")
+	current := desiredProxy("10808")
+	current["ProxyServer"] = stringReg("external.invalid:8000")
+	plan := restoreValues(current, proxyJournal{Before: before, Owned: owned})
+	if !reflect.DeepEqual(plan["ProxyServer"], current["ProxyServer"]) {
+		t.Fatal("external proxy overwritten")
+	}
+	for _, name := range []string{"ProxyEnable", "AutoConfigURL", "ProxyOverride"} {
+		if !reflect.DeepEqual(plan[name], before[name]) {
+			t.Fatal("previous value not restored")
+		}
+	}
+}

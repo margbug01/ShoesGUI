@@ -109,10 +109,10 @@ func (a *application) titleBar(c *ui.Context) {
 func (a *application) view(c *ui.Context) {
 	registerFonts()
 	// 快捷键。输入框有焦点时按键先给输入框，所以 Ctrl+V 在输入框里照常是粘贴
-	c.OnShortcut(ui.Ctrl, ui.KeyF, func() { a.share = nil; a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true })
-	c.OnShortcut(ui.Ctrl, ui.KeyN, func() { a.tab = "代理"; a.beginEdit(-1) })
+	c.OnShortcut(ui.Cmd, ui.KeyF, func() { a.share = nil; a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true })
+	c.OnShortcut(ui.Cmd, ui.KeyN, func() { a.tab = "代理"; a.beginEdit(-1) })
 	if a.tab == "代理" && !a.editing && !a.importing && a.share == nil {
-		c.OnShortcut(ui.Ctrl, ui.KeyV, a.openImport)
+		c.OnShortcut(ui.Cmd, ui.KeyV, a.openImport)
 	}
 	theme := *c.Theme()
 	theme.Font = "MiSans, system-ui"
@@ -324,15 +324,15 @@ func (a *application) settingsView(c *ui.Context) {
 		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
 			ui.Column(c).Gap(3).Children(func() {
 				ui.Text(c, "Shoes 内核路径").FontSize(14)
-				ui.Text(c, "一般会自动找到，和 ShoesGUI.exe 放在一起就行").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, kernelHint).FontSize(12).TextColor(c.Theme().TextMuted)
 			})
 			ui.Row(c).FillWidth().Gap(8).Children(func() {
-				input := ui.TextInput(c.Key("kernel-path"), &a.kernelDraft).Grow(1).Placeholder("shoes.exe").Label("Shoes 内核路径")
+				input := ui.TextInput(c.Key("kernel-path"), &a.kernelDraft).Grow(1).Placeholder(kernelName).Label("Shoes 内核路径")
 				if leftOrSubmitted(input, &a.kernelFocus) {
 					a.saveKernel()
 				}
 				if ui.Button(c.Key("browse"), "选择").Clicked() {
-					paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.window, Title: "选择 shoes.exe", Filters: []mygo.FileFilter{{Name: "可执行文件", Extensions: []string{"exe"}}}})
+					paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.window, Title: "选择 " + kernelName, Filters: []mygo.FileFilter{{Name: "可执行文件", Extensions: kernelExtensions}}})
 					if err != nil {
 						a.errorText = "无法打开文件"
 					} else if len(paths) > 0 {

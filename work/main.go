@@ -362,11 +362,12 @@ func (a *application) nodesView(c *ui.Context) {
 
 func detectKernel() string {
 	executable, _ := os.Executable()
-	candidate := filepath.Join(filepath.Dir(executable), "shoes.exe")
-	if validKernel(candidate) == nil {
-		return candidate
+	for _, candidate := range kernelCandidates(executable) {
+		if validKernel(candidate) == nil {
+			return candidate
+		}
 	}
-	if path, err := exec.LookPath("shoes.exe"); err == nil {
+	if path, err := exec.LookPath(kernelName); err == nil {
 		full, _ := filepath.Abs(path)
 		return full
 	}
@@ -388,6 +389,7 @@ func main() {
 	if err != nil {
 		return
 	}
+	recoverKernels(dir)
 	e := newEngine(dir)
 	a := &application{settings: defaultSettings(), engine: e, tab: "仪表盘", storageOK: true, settingsPath: filepath.Join(dir, "settings.dpapi"), delays: map[string]int{}, nodeGroup: "全部", logFilter: 1}
 	if err := loadEncrypted(a.settingsPath, &a.settings); err != nil && !errors.Is(err, os.ErrNotExist) {

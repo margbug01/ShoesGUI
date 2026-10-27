@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -24,6 +25,37 @@ func dataDir() (string, error) {
 	}
 	dir := filepath.Join(base, "ShoesGUI")
 	return dir, os.MkdirAll(dir, 0700)
+}
+
+func validKernel(path string) error {
+	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Ext(path), ".exe") {
+		return errors.New("请选择 shoes Windows .exe 的绝对路径")
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return errors.New("内核文件不存在")
+	}
+	return nil
+}
+
+func recoverKernels(dir string) {}
+
+const kernelName = "shoes.exe"
+const kernelHint = "一般会自动找到，和 ShoesGUI.exe 放在一起就行"
+
+var kernelExtensions = []string{"exe"}
+
+type kernelGroup windows.Handle
+
+func newKernelGroup(dir string) (kernelGroup, error) { h, err := newJob(); return kernelGroup(h), err }
+func configureKernel(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+}
+func (g kernelGroup) assign(pid int) error { return assignJob(windows.Handle(g), pid) }
+func (g kernelGroup) kill()                { windows.TerminateJobObject(windows.Handle(g), 1) }
+func (g kernelGroup) close()               { windows.CloseHandle(windows.Handle(g)) }
+func kernelCandidates(executable string) []string {
+	return []string{filepath.Join(filepath.Dir(executable), kernelName)}
 }
 
 func protect(data []byte, decrypt bool) ([]byte, error) {

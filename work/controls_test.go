@@ -89,7 +89,7 @@ func TestPortSavesOnEnterAndBlur(t *testing.T) {
 	}
 	tester.ClickAt(720, r.Y+r.H/2+9)
 	tester.Frame()
-	tester.Key(ui.Ctrl, ui.KeyA)
+	tester.Key(ui.Cmd, ui.KeyA)
 	tester.Type("18080")
 	tester.Key(0, ui.KeyEnter)
 	tester.Frame()
@@ -99,7 +99,7 @@ func TestPortSavesOnEnterAndBlur(t *testing.T) {
 	}
 	tester.ClickAt(720, r.Y+r.H/2+9)
 	tester.Frame()
-	tester.Key(ui.Ctrl, ui.KeyA)
+	tester.Key(ui.Cmd, ui.KeyA)
 	tester.Type("99999")
 	tester.Frame()
 	tester.ClickAt(300, 30) // 点别处
@@ -119,13 +119,13 @@ func TestShortcuts(t *testing.T) {
 	a.settings.Nodes, a.settings.Selected = []Node{sampleNode("Trojan")}, 0
 	tester := ui.NewTester(a.view, 820, 1000)
 	tester.Frame()
-	tester.Key(ui.Ctrl, ui.KeyF)
+	tester.Key(ui.Cmd, ui.KeyF)
 	tester.Frame()
 	tester.Frame()
 	if a.tab != "代理" || !tester.Focused("搜索节点") {
 		t.Fatalf("Ctrl+F: tab %q, search focused %v", a.tab, tester.Focused("搜索节点"))
 	}
-	tester.Key(ui.Ctrl, ui.KeyV) // 搜索框有焦点，是粘贴，不该打开导入
+	tester.Key(ui.Cmd, ui.KeyV) // 搜索框有焦点，是粘贴，不该打开导入
 	tester.Frame()
 	if a.importing {
 		t.Fatal("Ctrl+V in the search box opened import")
@@ -133,7 +133,7 @@ func TestShortcuts(t *testing.T) {
 	tester.Key(0, ui.KeyEscape)
 	tester.ClickAt(500, 900) // 点空白处，让搜索框失去焦点
 	tester.Frame()
-	tester.Key(ui.Ctrl, ui.KeyV)
+	tester.Key(ui.Cmd, ui.KeyV)
 	tester.Frame()
 	if !a.importing || a.importText == "" {
 		t.Fatalf("Ctrl+V on the node page did not open import (focused search %v)", tester.Focused("搜索节点"))

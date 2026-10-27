@@ -12,8 +12,6 @@ import (
 	"os"
 	"sync"
 	"time"
-
-	"golang.org/x/sys/windows"
 )
 
 // 测速照 v2rayN 来：同一个测试地址，每个节点最多 5 秒（它的 Global.LocalFetch）
@@ -169,8 +167,8 @@ func realPings(kernel, dir string, nodes []Node, report func(i, ms int)) error {
 		close(done)
 	}()
 	defer func() {
-		windows.TerminateJobObject(job, 1)
-		windows.CloseHandle(job)
+		job.kill()
+		job.close()
 		<-done
 		os.Remove(path)
 	}()

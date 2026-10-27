@@ -176,23 +176,6 @@ func TestEncryptedPersistence(t *testing.T) {
 	}
 }
 
-func TestRestorePlanPreservesExternalChanges(t *testing.T) {
-	before := desiredProxy("9000")
-	before["AutoConfigURL"] = stringReg("http://old.invalid/proxy.pac")
-	owned := desiredProxy("10808")
-	current := desiredProxy("10808")
-	current["ProxyServer"] = stringReg("external.invalid:8000")
-	plan := restoreValues(current, proxyJournal{Before: before, Owned: owned})
-	if !reflect.DeepEqual(plan["ProxyServer"], current["ProxyServer"]) {
-		t.Fatal("external proxy overwritten")
-	}
-	for _, name := range []string{"ProxyEnable", "AutoConfigURL", "ProxyOverride"} {
-		if !reflect.DeepEqual(plan[name], before[name]) {
-			t.Fatal("previous value not restored")
-		}
-	}
-}
-
 func TestNoProxyWritesWithoutJournal(t *testing.T) {
 	p := proxyManager{path: filepath.Join(t.TempDir(), "missing.dpapi")}
 	if err := p.restore(); err != nil || p.active {
