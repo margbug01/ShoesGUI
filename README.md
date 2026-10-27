@@ -108,7 +108,7 @@
 <details>
 <summary>订阅在 v2rayN 里能用，导进来却是一堆奇怪的节点？</summary>
 
-很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。Shoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.2`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
+很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。Shoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.3`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
 </details>
 
 <details>
@@ -167,7 +167,7 @@ exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里�
 ```sh
 cd work
 go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon assets/icon.png --manifest gui \
-  --product-name Shoes --file-description Shoes --product-version 0.2.0 --file-version 0.2.0 --original-filename ShoesGUI.exe
+  --product-name Shoes --file-description Shoes --product-version 0.3.0 --file-version 0.3.0 --original-filename ShoesGUI.exe
 ```
 
 ### macOS

@@ -58,7 +58,7 @@ func parseImport(text string) importResult {
 
 // subscriptionUA 机场面板按 User-Agent 决定回什么格式，不认得的多半当 Clash 回 YAML。
 // 我们解析的是 v2rayN 那种分享链接，所以照它的样子报；有的面板只看开头是不是 v2rayN，后缀放自己的名字
-const subscriptionUA = "v2rayN/7.13.8 ShoesGUI/0.2"
+const subscriptionUA = "v2rayN/7.13.8 ShoesGUI/0.3"
 
 // configFormat 认出整份配置文件（Clash YAML、JSON），这种不是链接列表，别把里面的网址当节点
 func configFormat(text string) string {
