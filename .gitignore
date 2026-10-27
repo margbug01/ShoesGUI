@@ -1,5 +1,6 @@
 .alma-snapshots/
 tmp/
+native/build/
 *.exe
 *.old.exe
 # 本地开发记录，不公开

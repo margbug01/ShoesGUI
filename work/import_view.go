@@ -15,6 +15,20 @@ import (
 var pasteIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 5H5v16h14V5h-3M8 13h8M8 17h5"/></svg>`))
 
 func (a *application) transportFields(c *ui.Context) {
+	if a.draft.Kind == "Hysteria2" {
+		a.draft.Network, a.draft.TLS, a.draft.SkipVerify = "quic", true, false
+		group(c, "HY2 原生 QUIC", func() {
+			field(c, "SNI", &a.draft.SNI)
+			field(c, "证书 SHA256 指纹", &a.draft.CertPin)
+			settingRow(c, "下载带宽 Mbps", "0 为自动；按实际带宽填写", func() {
+				value, speed, _ := a.hy2SpeedPick.bind(float64(a.draft.HY2DownloadMbps))
+				a.draft.HY2DownloadMbps = uint32(speed)
+				ui.NumberInput(c.Key("hy2-download"), value, 0, 10000, 10).Width(160)
+			})
+			ui.Text(c, "留空指纹使用可信证书；填写后严格固定证书。支持 TCP 应用经 QUIC 转发，暂不支持 UDP 应用、混淆和端口跳跃。").FontSize(12).TextColor(c.Theme().TextMuted)
+		})
+		return
+	}
 	group(c, "传输", func() {
 		if a.draft.Network == "" {
 			a.draft.Network = "tcp"

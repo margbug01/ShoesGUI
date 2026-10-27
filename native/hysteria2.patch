@@ -1,0 +1,575 @@
+diff --git a/src/config/types/client.rs b/src/config/types/client.rs
+index 6564d14..0681d09 100644
+--- a/src/config/types/client.rs
++++ b/src/config/types/client.rs
+@@ -383,6 +383,21 @@ impl Default for ClientConfig {
+ 
+ impl ClientConfig {
+     pub fn validate_quic_key_exchange(&self, initial_hop: bool) -> std::io::Result<()> {
++        if let ClientProxyConfig::Hysteria2 { password, .. } = &self.protocol {
++            if !initial_hop
++                || self.transport != Transport::Quic
++                || password.is_empty()
++                || self
++                    .quic_settings
++                    .as_ref()
++                    .is_none_or(|q| q.alpn_protocols.clone().into_vec() != ["h3"])
++            {
++                return Err(std::io::Error::new(
++                    std::io::ErrorKind::InvalidInput,
++                    "Hysteria2 requires hop 0, transport: quic, ALPN h3 and a nonempty password",
++                ));
++            }
++        }
+         let explicit_groups = self
+             .quic_settings
+             .as_ref()
+@@ -411,6 +426,11 @@ pub enum HttpVersion {
+ #[serde(tag = "type", rename_all = "lowercase")]
+ pub enum ClientProxyConfig {
+     Direct,
++    Hysteria2 {
++        password: String,
++        #[serde(default)]
++        download_mbps: u32,
++    },
+     Wireguard(Box<super::wireguard::WireguardClientConfig>),
+     Http {
+         #[serde(default, skip_serializing_if = "Option::is_none")]
+@@ -575,6 +595,7 @@ impl ClientProxyConfig {
+     pub fn protocol_name(&self) -> &str {
+         match self {
+             ClientProxyConfig::Direct => "Direct",
++            ClientProxyConfig::Hysteria2 { .. } => "Hysteria2",
+             ClientProxyConfig::Wireguard(_) => "WireGuard",
+             ClientProxyConfig::Http { .. } => "HTTP",
+             ClientProxyConfig::Socks { .. } => "SOCKS5",
+diff --git a/src/lib.rs b/src/lib.rs
+index 2dc5013..e73676c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -53,6 +53,7 @@ mod h2mux;
+ mod http2;
+ mod http_handler;
+ mod hysteria2_server;
++mod hysteria2_client;
+ mod listener_tasks;
+ mod mixed_handler;
+ mod naiveproxy;
+diff --git a/src/tcp/proxy_connector_impl.rs b/src/tcp/proxy_connector_impl.rs
+index 8fe6170..0d82b3d 100644
+--- a/src/tcp/proxy_connector_impl.rs
++++ b/src/tcp/proxy_connector_impl.rs
+@@ -29,6 +29,7 @@ pub struct ProxyConnectorImpl {
+     location: NetLocation,
+     client_handler: Box<dyn TcpClientHandler>,
+     xhttp: Option<Arc<crate::xhttp::client::Client>>,
++    hysteria2: Option<Arc<crate::hysteria2_client::Client>>,
+ }
+ 
+ impl ProxyConnectorImpl {
+@@ -43,6 +44,27 @@ impl ProxyConnectorImpl {
+             return Ok(None);
+         }
+ 
++        if let crate::config::ClientProxyConfig::Hysteria2 {
++            password,
++            download_mbps,
++        } = &config.protocol
++        {
++            config.validate_quic_key_exchange(true)?;
++            return Ok(Some(Self {
++                location: config.address,
++                client_handler: create_tcp_client_handler(
++                    crate::config::ClientProxyConfig::PortForward,
++                    None,
++                    resolver,
++                )?,
++                xhttp: None,
++                hysteria2: Some(Arc::new(crate::hysteria2_client::Client::new(
++                    password.clone(),
++                    *download_mbps,
++                )?)),
++            }));
++        }
++
+         if let Some((xhttp, client_handler)) =
+             crate::xhttp::connector::build(&config, resolver.clone())?
+         {
+@@ -50,6 +72,7 @@ impl ProxyConnectorImpl {
+                 location: config.address,
+                 client_handler,
+                 xhttp: Some(xhttp),
++                hysteria2: None,
+             }));
+         }
+ 
+@@ -57,6 +80,7 @@ impl ProxyConnectorImpl {
+ 
+         Ok(Some(Self {
+             xhttp: None,
++            hysteria2: None,
+             location: config.address,
+             client_handler: create_tcp_client_handler(
+                 config.protocol,
+@@ -78,7 +102,7 @@ impl ProxyConnector for ProxyConnectorImpl {
+     }
+ 
+     fn needs_carrier_dialer(&self) -> bool {
+-        self.xhttp.is_some()
++        self.xhttp.is_some() || self.hysteria2.is_some()
+     }
+ 
+     async fn connect_tcp_with_dialer(
+@@ -86,6 +110,9 @@ impl ProxyConnector for ProxyConnectorImpl {
+         dialer: Arc<dyn super::carrier_dialer::CarrierDialer>,
+         target: &ResolvedLocation,
+     ) -> std::io::Result<TcpClientSetupResult> {
++        if let Some(client) = &self.hysteria2 {
++            return client.open(dialer, target).await;
++        }
+         let stream: Box<dyn AsyncStream> = match &self.xhttp {
+             Some(client) => Box::new(client.open(dialer).await?),
+             None => dialer.open_stream().await?,
+@@ -100,6 +127,12 @@ impl ProxyConnector for ProxyConnectorImpl {
+         dialer: Arc<dyn super::carrier_dialer::CarrierDialer>,
+         target: ResolvedLocation,
+     ) -> std::io::Result<Box<dyn AsyncMessageStream>> {
++        if self.hysteria2.is_some() {
++            return Err(std::io::Error::new(
++                std::io::ErrorKind::Unsupported,
++                "Hysteria2 UDP forwarding is not implemented",
++            ));
++        }
+         let stream: Box<dyn AsyncStream> = match &self.xhttp {
+             Some(client) => Box::new(client.open(dialer).await?),
+             None => dialer.open_stream().await?,
+@@ -114,14 +147,14 @@ impl ProxyConnector for ProxyConnectorImpl {
+     }
+ 
+     fn supports_udp_over_tcp(&self) -> bool {
+-        self.client_handler.supports_udp_over_tcp()
++        self.hysteria2.is_none() && self.client_handler.supports_udp_over_tcp()
+     }
+ 
+     async fn try_reuse_tcp_stream(
+         &self,
+         target: &ResolvedLocation,
+     ) -> std::io::Result<Option<TcpClientSetupResult>> {
+-        if self.xhttp.is_some() {
++        if self.xhttp.is_some() || self.hysteria2.is_some() {
+             return Ok(None);
+         }
+         self.client_handler.try_reuse_tcp_stream(target).await
+@@ -132,10 +165,10 @@ impl ProxyConnector for ProxyConnectorImpl {
+         stream: Box<dyn AsyncStream>,
+         target: &ResolvedLocation,
+     ) -> std::io::Result<TcpClientSetupResult> {
+-        if self.xhttp.is_some() {
++        if self.xhttp.is_some() || self.hysteria2.is_some() {
+             return Err(std::io::Error::new(
+                 std::io::ErrorKind::Unsupported,
+-                "XHTTP requires a carrier dialer",
++                "This protocol requires a carrier dialer",
+             ));
+         }
+         debug!(
+@@ -152,10 +185,10 @@ impl ProxyConnector for ProxyConnectorImpl {
+         stream: Box<dyn AsyncStream>,
+         target: ResolvedLocation,
+     ) -> std::io::Result<Box<dyn AsyncMessageStream>> {
+-        if self.xhttp.is_some() {
++        if self.xhttp.is_some() || self.hysteria2.is_some() {
+             return Err(std::io::Error::new(
+                 std::io::ErrorKind::Unsupported,
+-                "XHTTP requires a carrier dialer",
++                "This protocol requires a carrier dialer",
+             ));
+         }
+         debug!(
+@@ -274,6 +307,7 @@ mod tests {
+         let connects = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+         let proxy = ProxyConnectorImpl {
+             xhttp: None,
++            hysteria2: None,
+             location: NetLocation::from_str("localhost:443", None).unwrap(),
+             client_handler: Box::new(TlsClientHandler::new(
+                 client_config,
+diff --git a/src/tcp/socket_connector_impl.rs b/src/tcp/socket_connector_impl.rs
+index a6d2b2b..36dcf44 100644
+--- a/src/tcp/socket_connector_impl.rs
++++ b/src/tcp/socket_connector_impl.rs
+@@ -221,7 +221,11 @@ impl SocketConnectorImpl {
+                     (key_bytes, cert_bytes)
+                 });
+ 
+-                let is_xhttp = crate::xhttp::connector::contains(&config.protocol);
++                let is_xhttp = crate::xhttp::connector::contains(&config.protocol)
++                    || matches!(
++                        config.protocol,
++                        crate::config::ClientProxyConfig::Hysteria2 { .. }
++                    );
+                 let alpn_protocols = if is_xhttp && alpn_protocols.is_unspecified() {
+                     vec!["h3".to_owned()]
+                 } else {
+@@ -262,6 +266,12 @@ impl SocketConnectorImpl {
+                         .datagram_send_buffer_size(0);
+                 }
+ 
++                if matches!(config.protocol, crate::config::ClientProxyConfig::Hysteria2 { .. }) {
++                    transport_config.congestion_controller_factory(Arc::new(
++                        quinn::congestion::BbrConfig::default(),
++                    ));
++                }
++
+                 quinn_client_config.transport_config(Arc::new(transport_config));
+ 
+                 let endpoints_len = std::cmp::min(get_num_threads(), MAX_QUIC_ENDPOINTS);
+diff --git a/src/tcp/tcp_client_handler_factory.rs b/src/tcp/tcp_client_handler_factory.rs
+index f9ccbc0..c793792 100644
+--- a/src/tcp/tcp_client_handler_factory.rs
++++ b/src/tcp/tcp_client_handler_factory.rs
+@@ -46,6 +46,12 @@ pub fn create_tcp_client_handler(
+     resolver: Arc<dyn Resolver>,
+ ) -> std::io::Result<Box<dyn TcpClientHandler>> {
+     Ok(match client_proxy_config {
++        ClientProxyConfig::Hysteria2 { .. } => {
++            return Err(std::io::Error::new(
++                std::io::ErrorKind::InvalidInput,
++                "Hysteria2 requires a first-hop QUIC carrier",
++            ));
++        }
+         ClientProxyConfig::Xhttp(_) => {
+             return Err(std::io::Error::new(
+                 std::io::ErrorKind::InvalidInput,
+diff --git a/src/hysteria2_client.rs b/src/hysteria2_client.rs
+new file mode 100644
+index 0000000..c52cbcd
+--- /dev/null
++++ b/src/hysteria2_client.rs
+@@ -0,0 +1,325 @@
++use crate::{
++    address::{Address, ResolvedLocation},
++    async_stream::{AsyncPing, AsyncStream},
++    quic_stream::QuicStream,
++    tcp::{
++        carrier_dialer::{CarrierDialer, QuicCarrier, RouteKey},
++        tcp_handler::TcpClientSetupResult,
++    },
++};
++use bytes::Bytes;
++use std::{
++    io,
++    pin::Pin,
++    sync::Arc,
++    task::{Context, Poll},
++    time::Duration,
++};
++use tokio::{
++    io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf},
++    sync::Mutex,
++};
++
++pub struct Client {
++    password: http::HeaderValue,
++    download_mbps: u32,
++    session: Mutex<Option<(RouteKey, Arc<Session>)>>,
++}
++
++impl std::fmt::Debug for Client {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        formatter
++            .debug_struct("Hysteria2Client")
++            .finish_non_exhaustive()
++    }
++}
++
++struct Session {
++    carrier: QuicCarrier,
++    _sender: h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>,
++    driver: tokio::task::JoinHandle<()>,
++}
++
++impl Drop for Session {
++    fn drop(&mut self) {
++        self.driver.abort();
++        self.carrier.connection.close(0u32.into(), b"client closed");
++    }
++}
++
++impl Client {
++    pub fn new(password: String, download_mbps: u32) -> io::Result<Self> {
++        if password.is_empty() {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "Hysteria2 password is empty",
++            ));
++        }
++        let mut password = http::HeaderValue::from_str(&password).map_err(|_| {
++            io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "Invalid Hysteria2 password header",
++            )
++        })?;
++        password.set_sensitive(true);
++        Ok(Self {
++            password,
++            download_mbps,
++            session: Mutex::new(None),
++        })
++    }
++
++    async fn authenticate(&self, carrier: QuicCarrier) -> io::Result<Arc<Session>> {
++        let (mut driver, sender) =
++            h3::client::new(h3_quinn::Connection::new(carrier.connection.clone()))
++                .await
++                .map_err(io::Error::other)?;
++        let driving = tokio::spawn(async move {
++            let _ = futures::future::poll_fn(|context| driver.poll_close(context)).await;
++        });
++        let mut session = Session {
++            carrier,
++            _sender: sender,
++            driver: driving,
++        };
++        let result = tokio::time::timeout(Duration::from_secs(10), async {
++            let request = http::Request::builder()
++                .method("POST")
++                .uri("https://hysteria/auth")
++                .header("Hysteria-Auth", self.password.clone())
++                .header(
++                    "Hysteria-CC-RX",
++                    (u64::from(self.download_mbps) * 125000).to_string(),
++                )
++                .header("Hysteria-Padding", "0000000000000000")
++                .body(())
++                .map_err(io::Error::other)?;
++            let mut stream = session
++                ._sender
++                .send_request(request)
++                .await
++                .map_err(io::Error::other)?;
++            stream.finish().await.map_err(io::Error::other)?;
++            let response = stream.recv_response().await.map_err(io::Error::other)?;
++            if response.status().as_u16() != 233 {
++                return Err(io::Error::new(
++                    io::ErrorKind::PermissionDenied,
++                    "Hysteria2 authentication rejected",
++                ));
++            }
++            if std::env::var_os("SHOES_HY2_DIAGNOSTICS").is_some() {
++                let receive_bandwidth = response.headers().get("Hysteria-CC-RX")
++                    .and_then(|value| value.to_str().ok())
++                    .and_then(|value| value.parse::<u64>().ok());
++                log::info!("HY2 authenticated: server receive bytes/sec={receive_bandwidth:?}");
++            }
++            Ok(())
++        })
++        .await;
++        match result {
++            Ok(Ok(())) => Ok(Arc::new(session)),
++            result => Err(match result {
++                Ok(Err(error)) => error,
++                _ => io::Error::new(
++                    io::ErrorKind::TimedOut,
++                    "Hysteria2 authentication timed out",
++                ),
++            }),
++        }
++    }
++
++    pub async fn open(
++        &self,
++        dialer: Arc<dyn CarrierDialer>,
++        target: &ResolvedLocation,
++    ) -> io::Result<TcpClientSetupResult> {
++        tokio::time::timeout(Duration::from_secs(15), self.open_inner(dialer, target))
++            .await
++            .map_err(|_| {
++                io::Error::new(io::ErrorKind::TimedOut, "Hysteria2 stream setup timed out")
++            })?
++    }
++
++    async fn open_inner(
++        &self,
++        dialer: Arc<dyn CarrierDialer>,
++        target: &ResolvedLocation,
++    ) -> io::Result<TcpClientSetupResult> {
++        let session = {
++            let mut cached = self.session.lock().await;
++            if cached.as_ref().is_some_and(|(route, session)| {
++                route != dialer.route_key()
++                    || session.carrier.connection.close_reason().is_some()
++                    || session.driver.is_finished()
++            }) {
++                *cached = None;
++            }
++            if cached.is_none() {
++                let carrier = dialer.open_quic().await?;
++                let session = self.authenticate(carrier).await?;
++                *cached = Some((dialer.route_key().clone(), session));
++            }
++            cached.as_ref().unwrap().1.clone()
++        };
++        let (mut send, mut recv) = session
++            .carrier
++            .connection
++            .open_bi()
++            .await
++            .map_err(io::Error::other)?;
++        let location = target.location();
++        let address = match location.address() {
++            Address::Ipv6(ip) => format!("[{ip}]:{}", location.port()),
++            _ => location.to_string(),
++        };
++        send.write_all(&tcp_request(&address)?)
++            .await
++            .map_err(io::Error::other)?;
++        read_response(&mut recv).await?;
++        let peer = session.carrier.connection.remote_address();
++        Ok(TcpClientSetupResult {
++            client_stream: Box::new(Stream {
++                inner: QuicStream::from(send, recv).with_peer(peer),
++                _session: session,
++            }),
++            early_data: None,
++        })
++    }
++}
++
++fn tcp_request(address: &str) -> io::Result<Vec<u8>> {
++    if address.is_empty() || address.len() > 2048 {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidInput,
++            "Invalid Hysteria2 destination length",
++        ));
++    }
++    let mut request = vec![0x44, 0x01];
++    let length = address.len() as u16;
++    if length < 64 {
++        request.push(length as u8);
++    } else {
++        request.extend_from_slice(&(length | 0x4000).to_be_bytes());
++    }
++    request.extend_from_slice(address.as_bytes());
++    request.push(0);
++    Ok(request)
++}
++
++async fn read_varint(reader: &mut (impl AsyncRead + Unpin)) -> io::Result<u64> {
++    let first = reader.read_u8().await?;
++    let length = 1usize << (first >> 6);
++    let mut value = u64::from(first & 63);
++    for _ in 1..length {
++        value = (value << 8) | u64::from(reader.read_u8().await?);
++    }
++    Ok(value)
++}
++
++async fn read_response(reader: &mut (impl AsyncRead + Unpin)) -> io::Result<()> {
++    let status = reader.read_u8().await?;
++    let message_length = read_varint(reader).await?;
++    if message_length > 2048 {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "Oversized Hysteria2 response",
++        ));
++    }
++    let mut message = vec![0; message_length as usize];
++    reader.read_exact(&mut message).await?;
++    let padding_length = read_varint(reader).await?;
++    if padding_length > 4096 {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "Oversized Hysteria2 padding",
++        ));
++    }
++    reader
++        .read_exact(&mut vec![0; padding_length as usize])
++        .await?;
++    if status != 0 {
++        return Err(io::Error::new(
++            io::ErrorKind::ConnectionRefused,
++            "Hysteria2 destination rejected",
++        ));
++    }
++    Ok(())
++}
++
++struct Stream {
++    inner: QuicStream,
++    _session: Arc<Session>,
++}
++impl Drop for Stream {
++    fn drop(&mut self) {
++        if std::env::var_os("SHOES_HY2_DIAGNOSTICS").is_some() {
++            log::info!("HY2 stream closed: {:?}", self._session.carrier.connection.stats());
++        }
++    }
++}
++impl AsyncRead for Stream {
++    fn poll_read(
++        mut self: Pin<&mut Self>,
++        context: &mut Context<'_>,
++        buffer: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        Pin::new(&mut self.inner).poll_read(context, buffer)
++    }
++}
++impl AsyncWrite for Stream {
++    fn poll_write(
++        mut self: Pin<&mut Self>,
++        context: &mut Context<'_>,
++        buffer: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        Pin::new(&mut self.inner).poll_write(context, buffer)
++    }
++    fn poll_flush(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(&mut self.inner).poll_flush(context)
++    }
++    fn poll_shutdown(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Pin::new(&mut self.inner).poll_shutdown(context)
++    }
++}
++impl AsyncPing for Stream {
++    fn supports_ping(&self) -> bool {
++        false
++    }
++    fn poll_write_ping(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<bool>> {
++        Poll::Ready(Ok(false))
++    }
++}
++impl AsyncStream for Stream {
++    fn peer_addr(&self) -> Option<std::net::SocketAddr> {
++        self.inner.peer_addr()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn request_frame_and_password_validation() {
++        assert_eq!(
++            tcp_request("example.com:443").unwrap(),
++            b"\x44\x01\x0fexample.com:443\x00"
++        );
++        assert!(tcp_request(&"x".repeat(2049)).is_err());
++        assert!(Client::new("secret\r\ninjected".into(), 100).is_err());
++        assert!(Client::new(String::new(), 0).is_err());
++        assert!(
++            !format!("{:?}", Client::new("secret-value".into(), 0).unwrap())
++                .contains("secret-value")
++        );
++    }
++    #[tokio::test]
++    async fn response_validation_preserves_payload() {
++        let mut data: &[u8] = &[0, 0, 0, 42];
++        read_response(&mut data).await.unwrap();
++        assert_eq!(data, &[42]);
++        assert!(read_response(&mut &[1, 0, 0][..]).await.is_err());
++        assert!(read_response(&mut &[0, 0x7f, 0xff][..]).await.is_err());
++        assert!(read_response(&mut &[0, 0, 0x7f, 0xff][..]).await.is_err());
++        assert!(read_response(&mut &[0][..]).await.is_err());
++    }
++}

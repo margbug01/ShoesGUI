@@ -210,7 +210,7 @@ func TestNodeMenuIsGrouped(t *testing.T) {
 		t.Fatal(err)
 	}
 	tester.Frame()
-	if got := strings.Join(tester.Menu(), "|"); !strings.HasPrefix(got, "编辑|测速|移至分组") || !strings.HasSuffix(got, "删除") {
+	if got := strings.Join(tester.Menu(), "|"); !strings.HasPrefix(got, "分享节点|编辑|测速|移至分组") || !strings.HasSuffix(got, "删除") {
 		t.Fatal("menu:", got)
 	}
 	if err := tester.ChooseMenuItem("移至分组", "机场"); err != nil {

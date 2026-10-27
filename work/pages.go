@@ -109,9 +109,9 @@ func (a *application) titleBar(c *ui.Context) {
 func (a *application) view(c *ui.Context) {
 	registerFonts()
 	// 快捷键。输入框有焦点时按键先给输入框，所以 Ctrl+V 在输入框里照常是粘贴
-	c.OnShortcut(ui.Ctrl, ui.KeyF, func() { a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true })
+	c.OnShortcut(ui.Ctrl, ui.KeyF, func() { a.share = nil; a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true })
 	c.OnShortcut(ui.Ctrl, ui.KeyN, func() { a.tab = "代理"; a.beginEdit(-1) })
-	if a.tab == "代理" && !a.editing && !a.importing {
+	if a.tab == "代理" && !a.editing && !a.importing && a.share == nil {
 		c.OnShortcut(ui.Ctrl, ui.KeyV, a.openImport)
 	}
 	theme := *c.Theme()
@@ -153,7 +153,9 @@ func (a *application) view(c *ui.Context) {
 			ui.Scroll(c).FillWidth().Grow(1).Children(func() {
 				ui.Column(c.Key(a.tab)).FillWidth().Padding(0, 28, 20, 28).Gap(8).Children(func() {
 					title := a.tab
-					if a.tab == "代理" && a.importing {
+					if a.tab == "代理" && a.share != nil {
+						title = "分享与导出"
+					} else if a.tab == "代理" && a.importing {
 						title = "粘贴导入"
 					} else if a.tab == "代理" && a.editing {
 						title = "编辑节点"
@@ -173,7 +175,7 @@ func (a *application) view(c *ui.Context) {
 								a.logFilter = v
 							}
 						}
-						if a.tab == "代理" && !a.editing && !a.importing {
+						if a.tab == "代理" && !a.editing && !a.importing && a.share == nil {
 							visible := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 							label := fmt.Sprintf("测速：%s %d 个", a.nodeGroup, len(visible))
 							if a.testing {

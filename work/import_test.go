@@ -163,7 +163,7 @@ func TestUnsupportedImportIsReported(t *testing.T) {
 		"vless://" + importUUID + "@example.com:443?type=ws&path=%2F%3Fed%3D2048",
 		"vless://" + importUUID + "@example.com:443?security=reality",
 		"vless://" + importUUID + "@example.com:443?type=xhttp&extra=" + url.QueryEscape(`{"downloadSettings":{}}`),
-		"hysteria2://test-only@example.com:443",
+		"hysteria2://test-only@example.com:443?obfs=salamander",
 		"tuic://" + importUUID + ":test-only@example.com:443",
 		"ss://YWVzLTEyOC1nY206dGVzdA@example.com:443?plugin=obfs-local",
 		"trojan://example.com:443",

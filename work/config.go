@@ -13,22 +13,24 @@ import (
 )
 
 type Node struct {
-	Group       string
-	FromSub     bool `json:",omitempty"` // 来自分组绑定的订阅，「更新订阅」只动这些
-	Network     string
-	Reality     bool
-	PublicKey   string
-	ShortID     string
-	Flow        string
-	Encryption  string
-	Path        string
-	HTTPHost    string
-	Mode        string
-	ALPN        string
-	SkipVerify  bool
-	Fingerprint string
-	MLDSAVerify string
-	XHTTPExtra  json.RawMessage `json:",omitempty"`
+	Group           string
+	FromSub         bool `json:",omitempty"` // 来自分组绑定的订阅，「更新订阅」只动这些
+	Network         string
+	Reality         bool
+	PublicKey       string
+	ShortID         string
+	Flow            string
+	Encryption      string
+	Path            string
+	HTTPHost        string
+	Mode            string
+	ALPN            string
+	SkipVerify      bool
+	CertPin         string `json:",omitempty"`
+	HY2DownloadMbps uint32 `json:",omitempty"`
+	Fingerprint     string
+	MLDSAVerify     string
+	XHTTPExtra      json.RawMessage `json:",omitempty"`
 
 	Name     string
 	Kind     string
@@ -153,6 +155,9 @@ func (n Node) validate() error {
 	}
 	if _, err := portNumber(n.Port); err != nil {
 		return err
+	}
+	if n.Kind == "Hysteria2" {
+		return validateHY2(n)
 	}
 	switch n.Kind {
 	case "SOCKS5", "HTTP":
@@ -347,7 +352,9 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 		if err := n.validate(); err != nil {
 			return nil, fmt.Errorf("节点「%s」：%v", n.Name, err)
 		}
-		members[i] = map[string]any{"name": names[i], "address": net.JoinHostPort(n.Host, n.Port), "protocol": protocol(n)}
+		member := clientConfig(n)
+		member["name"] = names[i]
+		members[i] = member
 	}
 	selected := names[0]
 	if s.Selected >= 0 && s.Selected < len(names) {
@@ -379,7 +386,7 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 			},
 		},
 	}
-	data, err := json.MarshalIndent(config, "", "  ")
+	data, err := json.MarshalIndent(withHY2Limits(config, s.Nodes), "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("无法生成配置")
 	}

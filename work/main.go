@@ -25,6 +25,7 @@ type application struct {
 	fetching       bool   // 正在拉订阅（更新订阅）
 	parsing        bool   // 粘贴导入正在识别（订阅地址要联网）
 	lastImport     string // 这次打开 Shoes 后最后导入的内容，剪贴板还是它就不再预填
+	share          *shareState
 	notice         string
 	noticeUntil    time.Time
 	addingGroup    bool
@@ -70,6 +71,7 @@ type application struct {
 	trayTip        string
 	dash           dashboard
 	// 下面这些是控件的跨帧绑定，见 choice
+	hy2SpeedPick            choice[float64]
 	themePick, modePick     choice[int]
 	loginPick, autoPick     choice[bool]
 	closePick               choice[bool]
@@ -181,6 +183,18 @@ func (a *application) selectedNode() (Node, bool) {
 
 // testNodes 测 indices 这些节点：tcp 为 true 做 TCPing，否则做真连接测速。结果都记在 delays，后测的覆盖先测的，和 v2rayN 一样
 func (a *application) testNodes(indices []int, tcp bool) {
+	if tcp {
+		filtered := make([]int, 0, len(indices))
+		for _, index := range indices {
+			if a.settings.Nodes[index].Kind != "Hysteria2" {
+				filtered = append(filtered, index)
+			}
+		}
+		if len(filtered) != len(indices) {
+			a.showNotice("HY2 使用 UDP，已跳过 TCPing；请用真连接测速")
+		}
+		indices = filtered
+	}
 	if a.testing || len(indices) == 0 {
 		return
 	}
@@ -263,6 +277,7 @@ func (a *application) secretField(c *ui.Context, label string, value *string) {
 }
 
 func (a *application) beginEdit(index int) {
+	a.share = nil
 	a.editing, a.editIndex, a.deleteConfirm, a.reveal = true, index, false, false
 	a.errorText = ""
 	a.importing = false
@@ -276,6 +291,10 @@ func (a *application) beginEdit(index int) {
 }
 
 func (a *application) nodesView(c *ui.Context) {
+	if a.share != nil {
+		a.shareView(c)
+		return
+	}
 	if a.importing {
 		a.importView(c)
 		return
@@ -286,7 +305,7 @@ func (a *application) nodesView(c *ui.Context) {
 			field(c, "名称", &a.draft.Name)
 			field(c, "分组", &a.draft.Group)
 			settingRow(c, "协议", "", func() {
-				ui.Select(c.Key("protocol"), &a.draft.Kind, []string{"SOCKS5", "HTTP", "Shadowsocks", "Trojan", "VLESS", "VMess", "AnyTLS"}).Width(240)
+				ui.Select(c.Key("protocol"), &a.draft.Kind, []string{"SOCKS5", "HTTP", "Shadowsocks", "Trojan", "VLESS", "VMess", "AnyTLS", "Hysteria2"}).Width(240)
 			})
 			field(c, "服务器", &a.draft.Host)
 			field(c, "端口", &a.draft.Port)
@@ -301,7 +320,7 @@ func (a *application) nodesView(c *ui.Context) {
 					ui.Select(c.Key("cipher"), &a.draft.Cipher, []string{"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-ietf-poly1305"}).Width(240)
 				})
 				a.secretField(c, "密码", &a.draft.Password)
-			case "Trojan", "AnyTLS":
+			case "Trojan", "AnyTLS", "Hysteria2":
 				a.secretField(c, "密码", &a.draft.Password)
 			case "VLESS", "VMess":
 				a.secretField(c, "UUID", &a.draft.UUID)
@@ -354,7 +373,14 @@ func detectKernel() string {
 	return ""
 }
 
+func configureRenderer() {
+	if _, configured := os.LookupEnv("MYGO_GPU"); !configured {
+		os.Setenv("MYGO_GPU", "0")
+	}
+}
+
 func main() {
+	configureRenderer()
 	if !mygo.App.RequestSingleInstanceLock() {
 		return // 已经在跑的那个会把窗口叫出来
 	}

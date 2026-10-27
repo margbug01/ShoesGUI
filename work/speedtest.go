@@ -48,6 +48,9 @@ func elapsedMS(started time.Time) int {
 // tcping 和 v2rayN 一样：先解析域名（不计时），再计 TCP 连上服务器端口的时间。
 // 只说明服务器端口开着，不经过代理协议，不代表节点能用
 func tcping(n Node) int {
+	if n.Kind == "Hysteria2" {
+		return -1
+	}
 	lookup, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
 	addrs, err := net.DefaultResolver.LookupIPAddr(lookup, n.Host)
@@ -111,11 +114,11 @@ func pingConfig(nodes []Node, ports []int) []byte {
 			"protocol": map[string]any{"type": "mixed", "udp_enabled": false},
 			"rules": []any{map[string]any{
 				"masks": "0.0.0.0/0", "action": "allow",
-				"client_chain": map[string]any{"address": net.JoinHostPort(n.Host, n.Port), "protocol": protocol(n)},
+				"client_chain": clientConfig(n),
 			}},
 		})
 	}
-	data, _ := json.Marshal(config)
+	data, _ := json.Marshal(withHY2Limits(config, nodes))
 	return data
 }
 

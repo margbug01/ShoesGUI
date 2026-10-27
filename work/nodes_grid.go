@@ -357,6 +357,9 @@ func (a *application) nodeGrid(c *ui.Context) {
 		}
 	})
 	a.groupTabs(c, groups, counts)
+	if ui.Button(c.Key("export-group"), "导出当前分组").Disabled(len(a.settings.Nodes) == 0).Tooltip("导出整个分组，不受搜索筛选影响；选全部则导出所有节点").Clicked() {
+		a.shareCurrentGroup()
+	}
 	// 分组标签上能连节点一起删分组，节点列表可能这一帧刚变短；下面画卡片要按现在的重新算，拿上面的下标会越界崩掉
 	keys, indices = delayKeys(a.settings.Nodes), visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
 	if group, ok := groupKey(a.nodeGroup); ok {
@@ -367,6 +370,9 @@ func (a *application) nodeGrid(c *ui.Context) {
 					host = u.Host
 				}
 				ui.Text(c, "订阅 · "+host).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0)
+				if ui.Button(c.Key("share-sub"), "分享订阅").Clicked() {
+					a.openShare(nil, source, a.nodeGroup+" · 分享订阅")
+				}
 				label := "更新订阅"
 				if a.fetching {
 					label = "更新中…"
@@ -429,6 +435,9 @@ func (a *application) nodeGrid(c *ui.Context) {
 				}
 			}
 			menu := func(m *ui.Menu) {
+				if m.Item("分享节点").Chosen() {
+					a.openShare([]Node{node}, "", node.Name)
+				}
 				if m.Item("编辑").Chosen() {
 					a.beginEdit(index)
 				}

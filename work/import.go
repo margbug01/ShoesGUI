@@ -158,7 +158,9 @@ func parseLink(link string) (Node, error) {
 		node.Username = parsed.User.Username()
 		node.Password, _ = parsed.User.Password()
 		node.TLS = parsed.Scheme == "https"
-	case "hysteria2", "hy2", "tuic":
+	case "hysteria2", "hy2":
+		return parseHY2(parsed)
+	case "tuic":
 		return Node{}, errors.New("当前 Shoes 内核不支持此协议的出站连接")
 	default:
 		return Node{}, errors.New("不支持此链接类型")
@@ -438,6 +440,10 @@ func mergeNodes(settings Settings, incoming []Node) (Settings, int) {
 }
 
 func nodeIdentity(node Node) string {
+	if node.Kind == "Hysteria2" {
+		data, _ := json.Marshal(clientConfig(node))
+		return string(data)
+	}
 	data, _ := json.Marshal(map[string]any{"host": node.Host, "port": node.Port, "protocol": protocol(node)})
 	return string(data)
 }
