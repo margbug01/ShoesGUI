@@ -66,6 +66,35 @@ func TestGenerateConfig(t *testing.T) {
 	}
 }
 
+func TestDirectDomains(t *testing.T) {
+	for _, mode := range []string{"", "global", "direct"} {
+		settings := Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", Mode: mode, DirectDomains: []string{"Example.COM", "only.example.net"}}
+		data, err := generateConfig(settings, testRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var entries []map[string]any
+		if err := json.Unmarshal(data, &entries); err != nil {
+			t.Fatal(err)
+		}
+		rules := entries[5]["rules"].([]any)
+		if len(rules) != 6 {
+			t.Fatal("default rules changed")
+		}
+		for index, mask := range []string{"example.com", "only.example.net"} {
+			want := map[string]any{"masks": mask, "action": "allow", "client_chain": groupDirect, "no_resolve": true}
+			if !reflect.DeepEqual(rules[index], want) {
+				t.Fatal("direct domain rule lost priority or scope")
+			}
+		}
+	}
+	for _, domain := range []string{"", ".", "*.example.com", "https://example.com", "example.com:443", "a..com", "-a.com", "a-.com", "127.0.0.1", "a/com", "a\n.com", strings.Repeat("a", 64) + ".com"} {
+		if _, err := generateConfig(Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", DirectDomains: []string{domain}}, testRuntime); err == nil {
+			t.Fatalf("accepted invalid direct domain %q", domain)
+		}
+	}
+}
+
 func TestKernelNames(t *testing.T) {
 	nodes := []Node{{Name: "香港"}, {Name: "香港"}, {Name: ""}, {Name: "direct"}, {Name: groupSelect}, {Name: "a\tb\x00"}, {Name: strings.Repeat("长", 200)}}
 	names := kernelNames(nodes)
@@ -143,7 +172,7 @@ func TestConfigEscapesCredentials(t *testing.T) {
 
 func TestEncryptedPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.dpapi")
-	want := Settings{Nodes: []Node{sampleNode("Trojan")}, Selected: 0, Port: "10808"}
+	want := Settings{Nodes: []Node{sampleNode("Trojan")}, Selected: 0, Port: "10808", DirectDomains: []string{"example.com", "only.example.net"}}
 	if err := saveEncrypted(path, want); err != nil {
 		t.Fatal(err)
 	}

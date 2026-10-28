@@ -329,6 +329,17 @@ func (e *engine) launch(s Settings) error {
 	secret := make([]byte, 24)
 	rand.Read(secret)
 	rt := runtimeConfig{APIPort: apiPort, Secret: hex.EncodeToString(secret), RulesDir: rules}
+	directFile := filepath.Join(e.dir, "direct-domains.txt")
+	if domains, readErr := os.ReadFile(directFile); readErr == nil {
+		for _, line := range strings.Split(strings.TrimPrefix(string(domains), "\ufeff"), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				s.DirectDomains = append(s.DirectDomains, line)
+			}
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return fmt.Errorf("读取直连规则文件失败: %w", readErr)
+	}
 	data, err := generateConfig(s, rt)
 	if err != nil {
 		return err

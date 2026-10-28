@@ -45,7 +45,8 @@ type Node struct {
 }
 
 type Settings struct {
-	Groups []string `json:",omitempty"`
+	Groups        []string `json:",omitempty"`
+	DirectDomains []string `json:",omitempty"`
 	// Subscriptions 分组 → 订阅地址，「更新订阅」照它重新拉。未分组的键是 ""
 	Subscriptions map[string]string `json:",omitempty"`
 	Nodes         []Node
@@ -370,6 +371,30 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 		}
 		return rule
 	}
+	rules := []any{}
+	for _, entry := range s.DirectDomains {
+		domain := strings.ToLower(strings.TrimSpace(entry))
+		if len(domain) == 0 || len(domain) > 253 || net.ParseIP(domain) != nil {
+			return nil, errors.New("直连域名无效")
+		}
+		for _, label := range strings.Split(domain, ".") {
+			if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+				return nil, errors.New("直连域名无效")
+			}
+			for _, char := range label {
+				if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+					return nil, errors.New("直连域名无效")
+				}
+			}
+		}
+		rules = append(rules, route(domain, groupDirect, true))
+	}
+	rules = append(rules,
+		route(privateRanges, groupDirect, true),
+		route(map[string]any{"path": filepath.Join(rt.RulesDir, "geosite-cn.mrs"), "behavior": "domain"}, groupDomestic, false),
+		route(map[string]any{"path": filepath.Join(rt.RulesDir, "geoip-cn.mrs"), "behavior": "ipcidr"}, groupDomestic, true),
+		route("0.0.0.0/0", groupOther, false),
+	)
 	config := []any{
 		map[string]any{"clash_api_address": fmt.Sprintf("127.0.0.1:%d", rt.APIPort), "secret": rt.Secret},
 		map[string]any{"client_group": groupDirect, "client_proxies": []any{map[string]any{"name": directMember, "protocol": map[string]any{"type": "direct"}}}},
@@ -380,12 +405,7 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 			"name":     "mixed-in",
 			"address":  net.JoinHostPort("127.0.0.1", s.Port),
 			"protocol": map[string]any{"type": "mixed", "udp_enabled": false},
-			"rules": []any{
-				route(privateRanges, groupDirect, true),
-				route(map[string]any{"path": filepath.Join(rt.RulesDir, "geosite-cn.mrs"), "behavior": "domain"}, groupDomestic, false),
-				route(map[string]any{"path": filepath.Join(rt.RulesDir, "geoip-cn.mrs"), "behavior": "ipcidr"}, groupDomestic, true),
-				route("0.0.0.0/0", groupOther, false),
-			},
+			"rules":    rules,
 		},
 	}
 	data, err := json.MarshalIndent(withHY2Limits(config, s.Nodes), "", "  ")
