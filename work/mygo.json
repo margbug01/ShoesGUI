@@ -1,7 +1,7 @@
 {
   "name": "ShoesGUI",
   "identifier": "dev.local.shoesgui",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "out": "../outputs",
   "icon": "assets/icon.png",
   "resources": [
