@@ -69,7 +69,7 @@ func TestGroupControls(t *testing.T) {
 			theme.Dark = dark
 			applyPalette(&theme, paletteFor(dark))
 			c.SetTheme(&theme)
-			ui.Column(c).Fill().Children(func() { a.nodeGrid(c); a.statusBar(c) })
+			ui.Column(c).Fill().Children(func() { a.nodesPage(c, 0); a.statusBar(c) })
 		}, 820, 620)
 		click := func(label string) {
 			t.Helper()
@@ -79,7 +79,7 @@ func TestGroupControls(t *testing.T) {
 			tester.Frame()
 			tester.Frame()
 		}
-		click("+ 新建分组")
+		click("新建分组")
 		a.groupDraft = "空组"
 		click("创建分组")
 		if a.nodeGroup != "空组" || a.addingGroup {
@@ -103,15 +103,7 @@ func TestGroupControls(t *testing.T) {
 	}
 }
 
-func TestNodeGridLayout(t *testing.T) {
-	for _, test := range []struct {
-		width   float32
-		columns int
-	}{{0, 2}, {360, 1}, {447, 1}, {448, 2}, {540, 2}, {676, 3}, {904, 4}} {
-		if got := nodeColumns(test.width); got != test.columns {
-			t.Fatalf("width %.0f: got %d columns, want %d", test.width, got, test.columns)
-		}
-	}
+func TestVisibleNodes(t *testing.T) {
 	nodes := []Node{{Name: "Hong Kong", Group: "uzi"}, {Name: "香港", Group: "快车"}, {Name: "Local"}}
 	if got := visibleNodes(nodes, "uzi", "KONG"); len(got) != 1 || got[0] != 0 {
 		t.Fatal("group/search intersection incorrect")
@@ -127,7 +119,8 @@ func TestNodeGridLayout(t *testing.T) {
 	}
 }
 
-func TestDeleteConfirmsOnTheCard(t *testing.T) {
+// 删节点先弹窗问一句，确认了才删；删的是正在用的就顺延到下一个并说一声
+func TestDeleteAsksFirst(t *testing.T) {
 	dir := t.TempDir()
 	a := &application{storageOK: true, settingsPath: filepath.Join(dir, "settings.dpapi"), settings: defaultSettings(), engine: newEngine(dir), nodeGroup: "全部", delays: map[string]int{}}
 	a.settings.Nodes = []Node{sampleNode("Trojan"), sampleNode("Trojan"), sampleNode("Trojan")}
@@ -136,12 +129,12 @@ func TestDeleteConfirmsOnTheCard(t *testing.T) {
 	}
 	a.settings.Selected = 1
 	tester := ui.NewTester(func(c *ui.Context) {
-		ui.Column(c).Fill().Children(func() { a.nodeGrid(c); a.statusBar(c) })
+		ui.Column(c).Fill().Children(func() { a.nodesPage(c, 0); a.statusBar(c) })
 	}, 820, 620)
 	a.editIndex, a.deleteConfirm = 1, true
 	tester.Frame()
 	if _, ok := tester.Find("删除这个节点？"); !ok {
-		t.Fatal("confirmation not shown on the card")
+		t.Fatal("no confirmation")
 	}
 	if err := tester.Click("删除"); err != nil {
 		t.Fatal(err)
@@ -205,7 +198,7 @@ func TestNodeMenuIsGrouped(t *testing.T) {
 	a := &application{storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), settings: defaultSettings(), engine: newEngine(dir), nodeGroup: "全部", delays: map[string]int{}}
 	a.settings.Nodes = []Node{sampleNode("Trojan"), sampleNode("Trojan")}
 	a.settings.Nodes[1].Group = "机场"
-	tester := ui.NewTester(func(c *ui.Context) { ui.Column(c).Fill().Children(func() { a.nodeGrid(c) }) }, 820, 620)
+	tester := ui.NewTester(func(c *ui.Context) { ui.Column(c).Fill().Children(func() { a.nodesPage(c, 0) }) }, 820, 620)
 	tester.Frame()
 	if err := tester.RightClick(a.settings.Nodes[0].Name); err != nil {
 		t.Fatal(err)
@@ -254,7 +247,7 @@ func TestDeleteGroupWithNodesWhileShowingIt(t *testing.T) {
 		a.settings.Nodes = append(a.settings.Nodes, n)
 	}
 	a.settings.Selected, a.nodeGroup, a.groupDelete = 5, "快车", "快车"
-	tester := ui.NewTester(func(c *ui.Context) { ui.Column(c).Fill().Children(func() { a.nodeGrid(c) }) }, 820, 1000)
+	tester := ui.NewTester(func(c *ui.Context) { ui.Column(c).Fill().Children(func() { a.nodesPage(c, 0) }) }, 820, 1000)
 	tester.Frame()
 	if err := tester.Click("连节点一起删"); err != nil {
 		t.Fatal(err)
@@ -263,5 +256,30 @@ func TestDeleteGroupWithNodesWhileShowingIt(t *testing.T) {
 	tester.Frame()
 	if len(a.settings.Nodes) != 2 || a.nodeGroup != "全部" || a.settings.Selected != 0 {
 		t.Fatalf("nodes %d, group %q, selected %d", len(a.settings.Nodes), a.nodeGroup, a.settings.Selected)
+	}
+}
+
+// 编辑、导入、分享里按 Esc 回到节点列表；删除弹窗按 Esc 只是关掉，节点还在
+func TestEscapeGoesBack(t *testing.T) {
+	a := shellTestApp(t)
+	a.tab = "代理"
+	tester := ui.NewTester(a.view, 880, 680)
+	a.beginEdit(0)
+	tester.Frame()
+	tester.Key(0, ui.KeyEscape)
+	tester.Frame()
+	if a.editing || !a.nodeListShown() {
+		t.Fatal("Escape did not leave the editor")
+	}
+	a.editIndex, a.deleteConfirm = 1, true
+	tester.Frame()
+	if _, ok := tester.Find("删除这个节点？"); !ok {
+		t.Fatal("no confirmation")
+	}
+	tester.Key(0, ui.KeyEscape)
+	tester.Frame()
+	tester.Frame()
+	if a.deleteConfirm || len(a.settings.Nodes) != 2 {
+		t.Fatalf("Escape on the dialog: open %v, %d nodes", a.deleteConfirm, len(a.settings.Nodes))
 	}
 }

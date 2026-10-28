@@ -78,45 +78,48 @@ func (a *application) saveShare(data []byte, extension string) {
 }
 
 func (a *application) shareView(c *ui.Context) {
+	p := pal(c)
 	state := a.share
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
-		if ui.Button(c.Key("close-share"), "返回节点").Clicked() {
-			a.share = nil
-		}
-		ui.Text(c, state.title).FontSize(18).SingleLine().Grow(1).MinWidth(0)
-	})
-	ui.Column(c).FillWidth().Gap(12).Padding(16, 0).Children(func() {
-		if state.subscription {
-			ui.Text(c, "分享整个订阅").FontSize(16)
-			ui.Text(c, "注意：对方可能获得整个账号的节点并使用你的流量；订阅导入后可以更新。仅分享给可信的人。").TextColor(c.Theme().Danger)
-		} else {
-			ui.Text(c, fmt.Sprintf("%d 个节点 · 当前配置快照，不会自动更新", state.count)).TextColor(c.Theme().TextMuted)
-			ui.Text(c, "链接和二维码包含连接凭据，仅分享给可信的人。")
-		}
+	ui.Row(c).FillWidth().Wrap().Gap(20).Padding(18).Radius(12).Background(p.card).Border(1, p.hairline).Children(func() {
 		if state.bitmap != nil {
-			ui.Image(c.Key("share-qr"), state.bitmap).Width(280).Height(280)
-			ui.Text(c, "打开 Shadowrocket 首页的扫一扫；也可以复制链接后在目标客户端导入。").FontSize(12).TextColor(c.Theme().TextMuted)
-		} else if state.warning != "" {
-			ui.Text(c, state.warning).TextColor(c.Theme().Danger)
-		} else {
-			ui.Text(c, "批量节点不合并成二维码，请复制链接或导出 TXT，在目标客户端批量导入。").TextColor(c.Theme().TextMuted)
+			ui.Box(c).Size(232, 232).Padding(10).Radius(10).Background(ui.RGB(255, 255, 255)).Shrink(0).Children(func() {
+				ui.Image(c.Key("share-qr"), state.bitmap).Size(212, 212)
+			})
 		}
-		ui.Text(c, "目标客户端须支持对应协议和传输；AnyTLS、Reality、XHTTP 等请使用支持该配置的版本。未经过 Shadowrocket 真机验证。").FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
-			label := "复制链接"
+		ui.Column(c).Grow(1).Basis(240).MinWidth(0).Gap(8).Children(func() {
+			ui.Text(c, state.title).FontSize(17).FontWeight(700).SingleLine()
 			if state.subscription {
-				label = "复制订阅地址"
+				ui.Text(c, "分享整个订阅").FontSize(13).TextColor(p.muted)
+				ui.Text(c, "对方可能拿到整个账号的节点并用你的流量；订阅导入后可以更新。只分享给可信的人。").FontSize(12.5).TextColor(p.bad).LineHeight(1.45)
+			} else {
+				ui.Text(c, fmt.Sprintf("%d 个节点 · 当前配置的快照，不会自动更新", state.count)).FontSize(13).TextColor(p.muted)
+				ui.Text(c, "链接和二维码里有连接凭据，只分享给可信的人。").FontSize(12.5).LineHeight(1.45)
 			}
-			if ui.PrimaryButton(c.Key("copy-share"), label).Clicked() {
-				writeClipboard(state.text)
-				a.showNotice("已复制，剪贴板中包含连接凭据")
+			switch {
+			case state.bitmap != nil:
+				ui.Text(c, "打开 Shadowrocket 首页的扫一扫；也可以复制链接，在目标客户端里导入。").FontSize(12).TextColor(p.muted).LineHeight(1.45)
+			case state.warning != "":
+				ui.Text(c, state.warning).FontSize(12.5).TextColor(p.bad).LineHeight(1.45)
+			default:
+				ui.Text(c, "批量节点不合并成二维码，请复制链接或导出 TXT，在目标客户端批量导入。").FontSize(12).TextColor(p.muted).LineHeight(1.45)
 			}
-			if ui.Button(c.Key("save-share-text"), "导出 TXT").Disabled(a.busy.Load()).Clicked() {
-				a.saveShare([]byte(state.text+"\n"), "txt")
-			}
-			if len(state.png) > 0 && ui.Button(c.Key("save-share-qr"), "保存二维码").Disabled(a.busy.Load()).Clicked() {
-				a.saveShare(state.png, "png")
-			}
+			ui.Text(c, "目标客户端要支持对应的协议和传输；AnyTLS、Reality、XHTTP 等请用支持这些配置的版本。没在 Shadowrocket 真机上验证过。").FontSize(12).TextColor(p.faint).LineHeight(1.45)
+			ui.Row(c).FillWidth().Wrap().Gap(8).Margin(6, 0, 0, 0).Children(func() {
+				label := "复制链接"
+				if state.subscription {
+					label = "复制订阅地址"
+				}
+				if ui.PrimaryButton(c.Key("copy-share"), label).Clicked() {
+					writeClipboard(state.text)
+					a.showNotice("已复制，剪贴板里有连接凭据")
+				}
+				if ui.Button(c.Key("save-share-text"), "导出 TXT").Disabled(a.busy.Load()).Clicked() {
+					a.saveShare([]byte(state.text+"\n"), "txt")
+				}
+				if len(state.png) > 0 && ui.Button(c.Key("save-share-qr"), "保存二维码").Disabled(a.busy.Load()).Clicked() {
+					a.saveShare(state.png, "png")
+				}
+			})
 		})
 	})
 }

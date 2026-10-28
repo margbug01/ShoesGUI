@@ -17,23 +17,23 @@ var pasteIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" str
 func (a *application) transportFields(c *ui.Context) {
 	if a.draft.Kind == "Hysteria2" {
 		a.draft.Network, a.draft.TLS, a.draft.SkipVerify = "quic", true, false
-		group(c, "HY2 原生 QUIC", func() {
+		section(c, "HY2 原生 QUIC", func() {
 			field(c, "SNI", &a.draft.SNI)
 			field(c, "证书 SHA256 指纹", &a.draft.CertPin)
-			settingRow(c, "下载带宽 Mbps", "0 为自动；按实际带宽填写", func() {
+			row(c, "下载带宽 Mbps", "0 为自动；按实际带宽填写", func() {
 				value, speed, _ := a.hy2SpeedPick.bind(float64(a.draft.HY2DownloadMbps))
 				a.draft.HY2DownloadMbps = uint32(speed)
 				ui.NumberInput(c.Key("hy2-download"), value, 0, 10000, 10).Width(160)
 			})
-			ui.Text(c, "留空指纹使用可信证书；填写后严格固定证书。支持 TCP 应用经 QUIC 转发，暂不支持 UDP 应用、混淆和端口跳跃。").FontSize(12).TextColor(c.Theme().TextMuted)
 		})
+		sectionNote(c, "留空指纹使用可信证书；填写后严格固定证书。支持 TCP 应用经 QUIC 转发，暂不支持 UDP 应用、混淆和端口跳跃。")
 		return
 	}
-	group(c, "传输", func() {
+	section(c, "传输", func() {
 		if a.draft.Network == "" {
 			a.draft.Network = "tcp"
 		}
-		settingRow(c, "传输方式", "", func() { ui.Select(c.Key("network"), &a.draft.Network, []string{"tcp", "ws", "xhttp"}).Width(240) })
+		row(c, "传输方式", "", func() { ui.Select(c.Key("network"), &a.draft.Network, []string{"tcp", "ws", "xhttp"}).Width(260) })
 		security := "none"
 		if a.draft.TLS || a.draft.Kind == "Trojan" || a.draft.Kind == "AnyTLS" {
 			security = "tls"
@@ -47,7 +47,7 @@ func (a *application) transportFields(c *ui.Context) {
 		}
 		p, picked, _ := a.securityPick.bind(security)
 		security = picked
-		settingRow(c, "安全层", "", func() { ui.Select(c.Key("security"), p, choices).Width(240) })
+		row(c, "安全层", "", func() { ui.Select(c.Key("security"), p, choices).Width(260) })
 		a.draft.TLS, a.draft.Reality = security == "tls", security == "reality"
 		if security != "none" {
 			field(c, "SNI", &a.draft.SNI)
@@ -64,30 +64,30 @@ func (a *application) transportFields(c *ui.Context) {
 			if a.draft.Mode == "" {
 				a.draft.Mode = "auto"
 			}
-			settingRow(c, "模式", "", func() {
-				ui.Select(c.Key("xhttp-mode"), &a.draft.Mode, []string{"auto", "stream-one", "stream-up", "packet-up"}).Width(240)
+			row(c, "模式", "", func() {
+				ui.Select(c.Key("xhttp-mode"), &a.draft.Mode, []string{"auto", "stream-one", "stream-up", "packet-up"}).Width(260)
 			})
 		}
 		if a.draft.Kind == "VLESS" {
-			settingRow(c, "Flow", "", func() { ui.Select(c.Key("flow"), &a.draft.Flow, []string{"", "xtls-rprx-vision"}).Width(240) })
+			row(c, "Flow", "", func() { ui.Select(c.Key("flow"), &a.draft.Flow, []string{"", "xtls-rprx-vision"}).Width(260) })
 		}
 		if a.draft.Kind == "VMess" {
 			if a.draft.Cipher != "auto" && a.draft.Cipher != "aes-128-gcm" && a.draft.Cipher != "chacha20-poly1305" && a.draft.Cipher != "none" {
 				a.draft.Cipher = "auto"
 			}
-			settingRow(c, "加密", "", func() {
-				ui.Select(c.Key("vmess-cipher"), &a.draft.Cipher, []string{"auto", "aes-128-gcm", "chacha20-poly1305", "none"}).Width(240)
+			row(c, "加密", "", func() {
+				ui.Select(c.Key("vmess-cipher"), &a.draft.Cipher, []string{"auto", "aes-128-gcm", "chacha20-poly1305", "none"}).Width(260)
 			})
 		}
 	})
-	ui.Row(c).FillWidth().Children(func() {
+	ui.Row(c).FillWidth().Padding(8, 0, 0, 0).Children(func() {
 		ui.Spacer(c)
 		if ui.Button(c.Key("advanced"), "高级参数").Clicked() {
 			a.advanced = !a.advanced
 		}
 	})
 	if a.advanced {
-		group(c, "", func() {
+		section(c, "", func() {
 			field(c, "ALPN", &a.draft.ALPN)
 			if a.draft.Kind == "VLESS" {
 				field(c, "VLESS 加密", &a.draft.Encryption)
@@ -96,12 +96,14 @@ func (a *application) transportFields(c *ui.Context) {
 				field(c, "ML-DSA 验证", &a.draft.MLDSAVerify)
 			}
 			if a.draft.TLS {
-				settingRow(c, "跳过证书验证", "", func() { ui.Switch(c.Key("skip-verify"), &a.draft.SkipVerify) })
+				row(c, "跳过证书验证", "", func() { ui.Switch(c.Key("skip-verify"), &a.draft.SkipVerify).Label("跳过证书验证") })
 			}
 			if a.draft.Network == "xhttp" {
 				p, extra, _ := a.extraPick.bind(string(a.draft.XHTTPExtra))
-				ui.Text(c, "XHTTP 扩展参数").FontSize(12).Padding(8, 0)
-				ui.TextArea(c.Key("xhttp-extra"), p).FillWidth().Height(100)
+				ui.Column(c).FillWidth().Padding(12, 16).Gap(8).Children(func() {
+					ui.Text(c, "XHTTP 扩展参数").FontSize(13.5).FontWeight(500)
+					ui.TextArea(c.Key("xhttp-extra"), p).FillWidth().Height(100)
+				})
 				a.draft.XHTTPExtra = []byte(extra)
 			}
 		})
@@ -382,78 +384,68 @@ func importable(text string) bool {
 }
 
 func (a *application) importView(c *ui.Context) {
-	muted := c.Theme().TextMuted
+	p := pal(c)
 	groups := orderedGroups(a.settings)
 	if !slices.Contains(groups, "未分组") {
 		groups = append(groups, "未分组")
 	}
-	group(c, "", func() {
-		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
-			ui.Text(c, "节点链接或订阅地址").FontSize(14)
+	section(c, "", func() {
+		ui.Column(c).FillWidth().Padding(12, 16, 14, 16).Gap(10).Children(func() {
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Text(c, "节点链接或订阅地址").FontSize(13.5).FontWeight(500).Grow(1)
+				if iconButton(c.Key("paste-again"), pasteIcon, "粘贴", a.parsing).Size(28, 28).Clicked() {
+					a.importText = readClipboard()
+					a.importParsed = ""
+					a.importResult = importResult{}
+				}
+			})
 			ui.TextArea(c.Key("import-text"), &a.importText).FillWidth().Height(140).Disabled(a.parsing).Placeholder("支持多条链接、Base64 订阅内容和订阅 URL")
-			ui.Text(c, "VLESS · VMess · Shadowsocks · Trojan · AnyTLS · SOCKS5 · HTTP").FontSize(11).TextColor(muted)
+			ui.Text(c, "VLESS · VMess · Shadowsocks · Trojan · AnyTLS · Hysteria2 · SOCKS5 · HTTP").FontSize(11.5).TextColor(p.faint)
 		})
 	})
-	ui.Row(c).FillWidth().Padding(8, 0).Gap(8).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).FillWidth().Padding(4, 4, 0, 4).Gap(8).AlignItems(ui.Center).Children(func() {
+		text := ""
 		switch {
 		case a.parsing:
-			ui.Text(c, "正在识别…订阅地址会联网读取").FontSize(12).TextColor(muted).Grow(1)
+			text = "正在识别…订阅地址会联网读取"
 		case strings.TrimSpace(a.importText) == "":
-			ui.Text(c, "粘贴后会自动识别，看过预览再点「导入」").FontSize(12).TextColor(muted).Grow(1)
+			text = "粘贴后会自动识别，看过预览再点「导入」"
 		case a.importParsed != a.importText:
-			ui.Text(c, "停下输入后自动识别…").FontSize(12).TextColor(muted).Grow(1)
-		default:
-			ui.Spacer(c)
+			text = "停下输入后自动识别…"
 		}
-		if iconButton(c.Key("paste-again"), pasteIcon, "粘贴", a.parsing).Clicked() {
-			a.importText = readClipboard()
-			a.importParsed = ""
-			a.importResult = importResult{}
-		}
+		ui.Text(c, text).FontSize(12.5).TextColor(p.muted).Grow(1)
 		if ui.Button(c.Key("parse"), "重新识别").Disabled(a.parsing || strings.TrimSpace(a.importText) == "").Clicked() {
 			a.parseImportAsync()
 		}
 	})
 	if a.importParsed != "" && a.importParsed == a.importText {
-		ui.Text(c, fmt.Sprintf("识别到 %d 个节点", len(a.importResult.Nodes))).FontSize(14).FontWeight(600)
-		for index, node := range a.importResult.Nodes {
-			if index == 8 {
-				ui.Text(c, fmt.Sprintf("另有 %d 个节点", len(a.importResult.Nodes)-8)).FontSize(12).TextColor(muted)
-				break
+		nodes, issues := a.importResult.Nodes, a.importResult.Issues
+		section(c, fmt.Sprintf("识别到 %d 个节点", len(nodes)), func() {
+			for index, node := range nodes {
+				if index == 8 {
+					ui.Text(c, fmt.Sprintf("另有 %d 个节点", len(nodes)-8)).FontSize(12.5).TextColor(p.muted).Padding(10, 16)
+					break
+				}
+				ui.Row(c).FillWidth().Padding(9, 16).Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, node.Name).FontSize(13).SingleLine().Grow(1).MinWidth(0)
+					chip(c, nodeProtocol(node))
+				})
 			}
-			ui.Text(c, node.Name+" · "+node.Kind).FontSize(12).TextColor(muted)
-		}
-		for index, issue := range a.importResult.Issues {
-			if index == 8 {
-				ui.Text(c, fmt.Sprintf("另有 %d 项未识别", len(a.importResult.Issues)-8)).FontSize(12)
-				break
+			for index, issue := range issues {
+				if index == 8 {
+					ui.Text(c, fmt.Sprintf("另有 %d 项没认出来", len(issues)-8)).FontSize(12.5).TextColor(p.bad).Padding(10, 16)
+					break
+				}
+				ui.Text(c, issue).FontSize(12.5).TextColor(p.bad).Padding(10, 16).LineHeight(1.4)
 			}
-			ui.Text(c, issue).FontSize(12).TextColor(c.Theme().Danger)
-		}
+			if len(nodes) == 0 && len(issues) == 0 {
+				ui.Text(c, "没有认出节点").FontSize(12.5).TextColor(p.muted).Padding(10, 16)
+			}
+		})
 	}
-	ui.Row(c).FillWidth().Padding(12, 0, 4, 0).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, "导入到").FontSize(13)
-		if a.importNew {
-			ui.TextInput(c.Key("import-new-group"), &a.importNewName).Width(200).Placeholder("新分组名称")
-			if ui.Button(c.Key("import-existing"), "选已有分组").Clicked() {
-				a.importNew = false
-			}
-		} else {
-			ui.Select(c.Key("import-target"), &a.importTarget, groups).Width(200)
-			if ui.Button(c.Key("import-new"), "新建分组").Clicked() {
-				a.importNew = true
-			}
-		}
-		ui.Spacer(c)
-		if ui.Button(c.Key("cancel-import"), "取消").Clicked() {
-			a.closeImport()
-		}
-		if ui.PrimaryButton(c.Key("confirm-import"), "导入").MinWidth(88).Disabled(a.parsing || a.importParsed != a.importText || len(a.importResult.Nodes) == 0).Clicked() {
-			a.finishImport()
-		}
-	})
+	hint := ""
 	if source := a.importResult.Source; source != "" && a.importParsed == a.importText {
-		hint := "订阅放进单独的分组，以后在分组里点「更新订阅」就能同步"
+		hint = "订阅放进单独的分组，以后在分组里点「更新订阅」就能同步"
 		if a.importNew {
 			hint = "已建议新建分组：订阅单独一组，以后在分组里点「更新订阅」就能同步"
 		}
@@ -462,8 +454,31 @@ func (a *application) importView(c *ui.Context) {
 				hint = "这个订阅已经在「" + a.importTarget + "」里，导入会按订阅更新这个分组"
 			}
 		}
-		ui.Text(c, hint).FontSize(12).TextColor(muted)
 	}
+	section(c, "", func() {
+		row(c, "导入到", hint, func() {
+			if a.importNew {
+				ui.TextInput(c.Key("import-new-group"), &a.importNewName).Width(180).Placeholder("新分组名称")
+				if ui.Button(c.Key("import-existing"), "选已有分组").Clicked() {
+					a.importNew = false
+				}
+			} else {
+				ui.Select(c.Key("import-target"), &a.importTarget, groups).Width(180)
+				if ui.Button(c.Key("import-new"), "新建分组").Clicked() {
+					a.importNew = true
+				}
+			}
+		})
+	})
+	ui.Row(c).FillWidth().Padding(16, 0, 0, 0).Gap(8).Children(func() {
+		ui.Spacer(c)
+		if ui.Button(c.Key("cancel-import"), "取消").Clicked() {
+			a.closeImport()
+		}
+		if ui.PrimaryButton(c.Key("confirm-import"), "导入").MinWidth(88).Disabled(a.parsing || a.importParsed != a.importText || len(a.importResult.Nodes) == 0).Clicked() {
+			a.finishImport()
+		}
+	})
 }
 
 // readClipboard 测试里换掉：离屏测试没有主循环，读剪贴板会一直等主线程

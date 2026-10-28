@@ -97,3 +97,60 @@ func TestDashboardTellsTheTruth(t *testing.T) {
 		t.Fatal("exit lookup started without system proxy")
 	}
 }
+
+// 网速图的曲线在两个采样点之间不冲出这两点的范围：一秒 3 MB、下一秒 0，中间不能画到底线下面去
+func TestTrafficCurveStaysBetweenSamples(t *testing.T) {
+	xs := []float32{0, 10, 20, 30, 40, 50, 60}
+	ys := []float32{100, 100, 2, 100, 100, 40, 100} // 屏幕坐标，越小越高；100 是底线
+	m := monotoneSlopes(xs, ys)
+	for i := 0; i+1 < len(xs); i++ {
+		h := (xs[i+1] - xs[i]) / 3
+		p0, p1, p2, p3 := ys[i], ys[i]+m[i]*h, ys[i+1]-m[i+1]*h, ys[i+1]
+		lo, hi := min(p0, p3), max(p0, p3)
+		for k := 0; k <= 20; k++ {
+			u := float32(k) / 20
+			y := (1-u)*(1-u)*(1-u)*p0 + 3*(1-u)*(1-u)*u*p1 + 3*(1-u)*u*u*p2 + u*u*u*p3
+			if y < lo-0.01 || y > hi+0.01 {
+				t.Fatalf("segment %d leaves [%.1f, %.1f] at %.2f: %.2f", i, lo, hi, u, y)
+			}
+		}
+	}
+}
+
+// 刻度的顶取 1、2、5 档，比最大值大一成以上，最少 20 KB/s；刻度上的字不带多余的小数
+func TestRateScale(t *testing.T) {
+	for peak, want := range map[int64]int64{0: 20 << 10, 300: 20 << 10, 19 << 10: 50 << 10, 600 << 10: 1 << 20, 3400 << 10: 5 << 20, 1 << 30: 2 << 30} {
+		if got := rateScale(peak); got != want {
+			t.Fatalf("peak %d: got %d, want %d", peak, got, want)
+		}
+	}
+	for n, want := range map[int64]string{20 << 10: "20 KB/s", 512 << 10: "512 KB/s", 5 << 20: "5 MB/s", 5 << 19: "2.5 MB/s", 2 << 30: "2 GB/s"} {
+		if got := rateText(n); got != want {
+			t.Fatalf("%d: got %q, want %q", n, got, want)
+		}
+	}
+}
+
+// 指针放到网速图上，看得到那一秒的上下行；最右边是「现在」
+func TestTrafficChartShowsTheSecondUnderThePointer(t *testing.T) {
+	a := shellTestApp(t)
+	for i := 0; i < speedSamples; i++ {
+		a.dash.push(rate{up: 1 << 10, down: int64(i) << 20})
+	}
+	tester := ui.NewTester(a.view, 880, 900)
+	tester.Frame()
+	r, ok := tester.Find("过去一分钟的网速")
+	if !ok {
+		t.Fatal("no chart")
+	}
+	tester.Move(r.X+r.W-1, r.Y+r.H/2)
+	tester.Frame()
+	if !tester.HasText("现在") || !tester.HasText("下载 59 MB/s") {
+		t.Fatal("no tooltip for the last second:", tester.Texts())
+	}
+	tester.Move(r.X+r.W-1-10*r.W/(speedSamples-1), r.Y+r.H/2)
+	tester.Frame()
+	if !tester.HasText("10 秒前") || !tester.HasText("下载 49 MB/s") {
+		t.Fatal("no tooltip ten seconds back:", tester.Texts())
+	}
+}

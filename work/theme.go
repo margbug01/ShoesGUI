@@ -3,7 +3,7 @@ package main
 import "github.com/egoist/mygo/ui"
 
 // palette 全 app 的颜色，深浅色各一套，照 MySpotify 的：内容区纯色，侧栏略灰，
-// 字、次要字、发丝线、悬停、按下各一档，再加一个强调色。good / bad 只用来说连没连上、出没出错
+// 字、次要字、发丝线、悬停、按下各一档，再加一个强调色。good / warn / bad 只用来说连没连上、延迟快慢、出没出错
 type palette struct {
 	dark     bool
 	bg       ui.Color // 内容区的底
@@ -17,7 +17,9 @@ type palette struct {
 	press    ui.Color
 	accent   ui.Color
 	onAccent ui.Color
+	up       ui.Color // 网速图里的上传；下载用 accent
 	good     ui.Color
+	warn     ui.Color
 	bad      ui.Color
 }
 
@@ -36,7 +38,9 @@ func paletteFor(dark bool) palette {
 			press:    ui.RGBA(255, 255, 255, 0.1),
 			accent:   ui.Hex("#0a84ff"),
 			onAccent: ui.Hex("#ffffff"),
+			up:       ui.Hex("#bf5af2"),
 			good:     ui.Hex("#30d158"),
+			warn:     ui.Hex("#ff9f0a"),
 			bad:      ui.Hex("#ff453a"),
 		}
 	}
@@ -52,7 +56,9 @@ func paletteFor(dark bool) palette {
 		press:    ui.RGBA(0, 0, 0, 0.08),
 		accent:   ui.Hex("#007aff"),
 		onAccent: ui.Hex("#ffffff"),
+		up:       ui.Hex("#af52de"),
 		good:     ui.Hex("#34c759"),
+		warn:     ui.Hex("#ff9500"),
 		bad:      ui.Hex("#ff3b30"),
 	}
 }

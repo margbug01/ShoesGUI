@@ -35,15 +35,6 @@ var boltIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stro
 
 var addIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`))
 
-// group / settingRow 编辑节点、粘贴导入还在用的分组，代理页换成新样式时再一起改掉
-func group(c *ui.Context, title string, body func()) {
-	t := c.Theme()
-	if title != "" {
-		ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Padding(16, 4, 6, 4)
-	}
-	ui.Column(c).FillWidth().Padding(4, 16).Radius(12).Background(paneColor(t)).Border(1, paneBorder(t)).Children(body)
-}
-
 // choice 给分段按钮、开关、下拉框、输入框绑一个跨帧的变量。MyGo 在一帧建完之后才把点击和输入写回
 // 绑定的变量，绑每帧新建的局部变量的话，这次操作就丢了。v 绑给控件，shown 是上一帧摆出来的值，两者不同就是用户刚改过
 type choice[T comparable] struct{ v, shown T }
@@ -56,18 +47,6 @@ func (ch *choice[T]) bind(current T) (p *T, picked T, changed bool) {
 	}
 	ch.v, ch.shown = current, current
 	return &ch.v, current, false
-}
-
-func settingRow(c *ui.Context, title, description string, control func()) {
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(12, 0).Gap(16).Children(func() {
-		ui.Column(c).Grow(1).Gap(3).Children(func() {
-			ui.Text(c, title).FontSize(13.5).FontWeight(500)
-			if description != "" {
-				ui.Text(c, description).FontSize(12).TextColor(c.Theme().TextMuted)
-			}
-		})
-		control()
-	})
 }
 
 const (
@@ -100,8 +79,10 @@ func (a *application) view(c *ui.Context) {
 	// 快捷键。输入框有焦点时按键先给输入框，所以 Ctrl+V 在输入框里照常是粘贴
 	c.OnShortcut(ui.Cmd, ui.KeyF, func() { a.share = nil; a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true })
 	c.OnShortcut(ui.Cmd, ui.KeyN, func() { a.tab = "代理"; a.beginEdit(-1) })
-	if a.tab == "代理" && !a.editing && !a.importing && a.share == nil {
+	if a.nodeListShown() {
 		c.OnShortcut(ui.Cmd, ui.KeyV, a.openImport)
+	} else if a.tab == "代理" {
+		c.OnShortcut(0, ui.KeyEscape, a.leaveSubpage)
 	}
 	theme := *c.Theme()
 	theme.Font = "MiSans, system-ui"
@@ -129,22 +110,26 @@ func (a *application) view(c *ui.Context) {
 		side.Children(func() { a.sidebar(c, status, ready, proxy, busy) })
 		ui.Column(c.Key("main")).Grow(1).MinWidth(0).FillHeight().Background(p.bg).BorderWidth(0, 0, 0, 1).BorderColor(p.hairline).Children(func() {
 			top := topBar(c)
-			ui.Scroll(c.Key("page-"+a.tab)).FillWidth().Grow(1).Padding(top+4, pagePad, 32, pagePad).ScrollbarInsets(top, 0, 0, 0).Children(func() {
-				a.startMark(c, top)
-				ui.Column(c.Key(a.tab)).FillWidth().Gap(8).Children(func() {
-					a.pageHeader(c, status, ready, proxy, busy)
-					switch a.tab {
-					case "仪表盘":
-						a.dashboardView(c, ready, proxy, busy)
-					case "代理":
-						a.nodesView(c)
-					case "设置":
-						a.settingsView(c)
-					case "日志":
-						a.logView(c, logs)
-					}
+			if a.nodeListShown() {
+				a.nodesPage(c, top) // 节点列表自己就是整页的滚动区，只建看得见的行
+			} else {
+				ui.Scroll(c.Key("page-"+a.tab)).FillWidth().Grow(1).Padding(top+4, pagePad, 32, pagePad).ScrollbarInsets(top, 0, 0, 0).Children(func() {
+					a.startMark(c, top)
+					ui.Column(c.Key(a.tab)).FillWidth().Gap(8).Children(func() {
+						a.pageHeader(c, status, ready, proxy, busy)
+						switch a.tab {
+						case "仪表盘":
+							a.dashboardView(c, status, ready, proxy, busy)
+						case "代理":
+							a.nodesView(c)
+						case "设置":
+							a.settingsView(c)
+						case "日志":
+							a.logView(c, logs)
+						}
+					})
 				})
-			})
+			}
 			a.statusBar(c)
 			// 顶上那一条压在页面上面：拖得动窗口，内容滚到它底下时出一道磨砂边
 			a.pageTop(c, top)
@@ -173,10 +158,14 @@ func (a *application) pageHeader(c *ui.Context, status string, ready, proxy, bus
 		}
 	}
 	ui.Row(c).FillWidth().MinHeight(36).AlignItems(ui.Center).Gap(6).Padding(0, 0, 10, 0).Children(func() {
+		if a.tab == "代理" && !a.nodeListShown() {
+			// 编辑、导入、分享是从节点列表点进来的，标题左边一个返回（Esc 也行）
+			if iconButton(c.Key("back"), backIcon, "返回节点", false).Margin(0, 0, 0, -8).Clicked() {
+				a.leaveSubpage()
+			}
+		}
 		heading(c, title).Grow(1).MinWidth(0)
 		switch {
-		case a.tab == "仪表盘":
-			a.dashboardHeader(c, status, ready, proxy, busy)
 		case a.tab == "日志":
 			p, v, changed := a.logPick.bind(a.logFilter)
 			segmented(c.Key("log-filter"), p, "全部", "只看重要")
@@ -209,6 +198,14 @@ func (a *application) pageHeader(c *ui.Context, status string, ready, proxy, bus
 			}
 		}
 	})
+}
+
+// leaveSubpage 从编辑、导入、分享回到节点列表
+func (a *application) leaveSubpage() {
+	if a.importing {
+		a.closeImport()
+	}
+	a.share, a.editing, a.errorText = nil, false, ""
 }
 
 // sidebar 左边一栏：页面导航，底下是新版本提示和连接状态。没被按钮接住的地方拖得动窗口，和它顶到的标题栏一样

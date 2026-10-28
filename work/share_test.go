@@ -118,10 +118,11 @@ func TestShareUI(t *testing.T) {
 	writeClipboard = func(text string) { copied = text }
 	node := sampleNode("Trojan")
 	node.TLS, node.Group = true, "旅行"
-	a := &application{settings: defaultSettings(), nodeGroup: "旅行", delays: map[string]int{}}
+	dir := t.TempDir()
+	a := &application{settings: defaultSettings(), engine: newEngine(dir), tab: "代理", storageOK: true, settingsPath: filepath.Join(dir, "s.dpapi"), nodeGroup: "旅行", delays: map[string]int{}}
 	a.settings.Nodes = []Node{node, sampleNode("VLESS")}
 	a.settings.Subscriptions = map[string]string{"旅行": "https://example.com/sub?token=fixture"}
-	tester := ui.NewTester(func(c *ui.Context) { ui.Column(c).Fill().Children(func() { a.nodesView(c) }) }, 820, 900)
+	tester := ui.NewTester(a.view, 880, 900) // 返回按钮在标题栏里，要整个窗口
 	tester.Frame()
 	if err := tester.RightClick(node.Name); err != nil {
 		t.Fatal(err)
@@ -166,7 +167,11 @@ func TestShareUI(t *testing.T) {
 	a.nodeSearch = "not-found"
 	tester.Frame()
 	tester.Frame()
-	if err := tester.Click("导出当前分组"); err != nil {
+	if err := tester.Click("分组操作"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if err := tester.ChooseMenuItem("导出当前分组"); err != nil {
 		t.Fatal(err)
 	}
 	tester.Frame()

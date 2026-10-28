@@ -33,6 +33,9 @@ type application struct {
 	noticeSeq      int  // showNotice 一次加一，界面据此弹 Toast
 	toasted        int  // 已经弹过 Toast 的 noticeSeq
 	underTop       bool // 页面内容滚到了顶上那一条底下，那一条就显出磨砂边
+	picking        bool // 仪表盘上「切换节点」的浮层开着
+	searchFocused  bool // 上一帧节点搜索框有没有焦点，有就给它一圈强调色
+	nodeList       ui.ListState
 	addingGroup    bool
 	renaming       string // 正在改名的分组
 	groupDelete    string // 正在确认删除的分组
@@ -260,14 +263,14 @@ func (a *application) forgetDelays(group string) {
 }
 
 func field(c *ui.Context, label string, value *string) {
-	settingRow(c, label, "", func() { ui.TextInput(c.Key(label), value).Width(240).Label(label) })
+	row(c, label, "", func() { ui.TextInput(c.Key(label), value).Width(260).Label(label) })
 }
 
 // secretField 密码、UUID 这类真正的秘密默认遮住，旁边一个「显示」好核对粘进来的对不对
 func (a *application) secretField(c *ui.Context, label string, value *string) {
-	settingRow(c, label, "", func() {
+	row(c, label, "", func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			input := ui.TextInput(c.Key(label), value).Width(170).Label(label)
+			input := ui.TextInput(c.Key(label), value).Width(190).Label(label)
 			text := "显示"
 			if a.reveal {
 				text = "隐藏"
@@ -305,24 +308,23 @@ func (a *application) nodesView(c *ui.Context) {
 		return
 	}
 	if a.editing {
-
-		group(c, "", func() {
+		section(c, "", func() {
 			field(c, "名称", &a.draft.Name)
 			field(c, "分组", &a.draft.Group)
-			settingRow(c, "协议", "", func() {
-				ui.Select(c.Key("protocol"), &a.draft.Kind, []string{"SOCKS5", "HTTP", "Shadowsocks", "Trojan", "VLESS", "VMess", "AnyTLS", "Hysteria2"}).Width(240)
+			row(c, "协议", "", func() {
+				ui.Select(c.Key("protocol"), &a.draft.Kind, []string{"SOCKS5", "HTTP", "Shadowsocks", "Trojan", "VLESS", "VMess", "AnyTLS", "Hysteria2"}).Width(260)
 			})
 			field(c, "服务器", &a.draft.Host)
 			field(c, "端口", &a.draft.Port)
 		})
-		group(c.Key(a.draft.Kind), "认证", func() {
+		section(c.Key(a.draft.Kind), "认证", func() {
 			switch a.draft.Kind {
 			case "SOCKS5", "HTTP":
 				field(c, "用户名", &a.draft.Username)
 				a.secretField(c, "密码", &a.draft.Password)
 			case "Shadowsocks":
-				settingRow(c, "加密方式", "", func() {
-					ui.Select(c.Key("cipher"), &a.draft.Cipher, []string{"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-ietf-poly1305"}).Width(240)
+				row(c, "加密方式", "", func() {
+					ui.Select(c.Key("cipher"), &a.draft.Cipher, []string{"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-ietf-poly1305"}).Width(260)
 				})
 				a.secretField(c, "密码", &a.draft.Password)
 			case "Trojan", "AnyTLS", "Hysteria2":
@@ -333,7 +335,7 @@ func (a *application) nodesView(c *ui.Context) {
 		})
 
 		a.transportFields(c)
-		ui.Row(c).FillWidth().Padding(12, 0, 0, 0).Gap(8).Children(func() {
+		ui.Row(c).FillWidth().Padding(16, 0, 0, 0).Gap(8).Children(func() {
 			ui.Spacer(c)
 			if ui.Button(c.Key("cancel-edit"), "取消").Clicked() {
 				a.editing = false
@@ -362,7 +364,7 @@ func (a *application) nodesView(c *ui.Context) {
 		})
 		return
 	}
-	a.nodeGrid(c)
+	a.nodesPage(c, 0)
 }
 
 // chooseKernel 打开时决定用哪个内核。存下的路径失效了，或者是另一份 Shoes 自带的内核（比如先从 dmg、开发版打开过，
@@ -474,7 +476,7 @@ func main() {
 	mygo.App.WhenReady(func() {
 		a.openAtLogin = mygo.App.OpenAtLogin()
 		a.window = mygo.NewWindow(mygo.WindowOptions{
-			Title: "Shoes", Width: 880, Height: 640, MinWidth: 680, MinHeight: 500, DisableMaximize: true, StateKey: "main",
+			Title: "Shoes", Width: 880, Height: 680, MinWidth: 680, MinHeight: 500, DisableMaximize: true, StateKey: "main",
 			Hidden: mygo.App.WasOpenedAtLogin(),
 			// 隐藏系统标题栏，页面一直铺到窗口顶上：macOS 的红绿灯挪进侧栏左上角，
 			// Windows 的最小化、关闭还是系统自己的，占满顶上 winBarHeight 那一条
