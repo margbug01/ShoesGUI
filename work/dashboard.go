@@ -70,21 +70,29 @@ func (a *application) watchTraffic() {
 	}
 }
 
-// watchConnections 仪表盘开着时每 2 秒拉一次连接数和内核内存
+// watchConnections 每秒拉一次连接：记进 a.flows（连接页看每个域名怎么走的），顺带拿连接数和内核内存给仪表盘
 func (a *application) watchConnections() {
-	for range time.Tick(2 * time.Second) {
-		if !a.dashOn.Load() {
-			continue
-		}
+	shown := [2]int64{-1, -1}
+	for range time.Tick(time.Second) {
 		var snap struct {
-			Connections []json.RawMessage
+			Connections []flowConn
 			Memory      int64
 		}
-		if a.engine.call(http.MethodGet, "/connections", nil, &snap) != nil {
-			continue
+		if err := a.engine.call(http.MethodGet, "/connections", nil, &snap); err != nil {
+			if _, _, ready := a.engine.endpoint(); ready {
+				continue // 内核还在，只是这一次没问到，别把连接都当成断了
+			}
+			snap.Connections = nil
 		}
-		count, memory := len(snap.Connections), snap.Memory
-		a.window.Update(func() { a.dash.conns, a.dash.memory = count, memory })
+		changed := a.flows.record(snap.Connections, time.Now())
+		count, memory := int64(len(snap.Connections)), snap.Memory
+		dash := a.dashOn.Load() && shown != [2]int64{count, memory}
+		if dash || a.connsOn.Load() && changed {
+			if dash {
+				shown = [2]int64{count, memory}
+			}
+			a.window.Update(func() { a.dash.conns, a.dash.memory = int(count), memory })
+		}
 	}
 }
 

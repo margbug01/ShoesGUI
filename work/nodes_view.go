@@ -143,60 +143,28 @@ func (a *application) nodeToolbar(c *ui.Context, indices []int, keys []string) {
 	})
 }
 
-// searchField MySpotify 侧栏那样的搜索框：放大镜、圆角浅底，有焦点时一圈强调色
+// searchField 节点搜索框，⌘F / Ctrl+F 会把焦点放进来
 func (a *application) searchField(c *ui.Context) {
-	p := pal(c)
-	field := ui.Row(c).Grow(1).MinWidth(140).Height(32).PaddingX(10).Gap(7).Radius(9).AlignItems(ui.Center)
-	if a.searchFocused {
-		field.Background(p.bg).Border(1, p.accent.Alpha(0.6)).Shadow(0, 0, 0, 3, p.accent.Alpha(0.2))
-	} else {
-		field.Background(p.hover).Border(1, p.hairline)
+	input := searchBox(c, "search-nodes", "搜索节点", "搜索节点（"+shortcutHint("F")+"）", &a.nodeSearch, &a.searchFocused)
+	if a.focusSearch {
+		input.Focus()
+		a.focusSearch = false
 	}
-	field.Children(func() {
-		ui.Icon(c, searchIcon).Size(14, 14).TextColor(p.muted)
-		input := ui.TextInputBase(c.Key("search-nodes"), &a.nodeSearch).Grow(1).Placeholder("搜索节点（" + shortcutHint("F") + "）").FontSize(13).Label("搜索节点")
-		if a.focusSearch {
-			input.Focus()
-			a.focusSearch = false
-		}
-		a.searchFocused = input.Focused()
-		if a.nodeSearch != "" {
-			clear := ui.ButtonBase(c.Key("clear-search")).Size(18, 18).Center().Radius(9).Background(p.faint).Label("清空搜索").Cursor(ui.CursorPointer)
-			clear.Children(func() { ui.Icon(c, closeIcon).Size(10, 10).TextColor(p.bg) })
-			if clear.Clicked() {
-				a.nodeSearch = ""
-			}
-		}
-	})
 }
 
 // groupChips MySpotify 首页「全部 / 音乐 / 播客」那样的胶囊，选中的反色。右键自建的分组能改名、删除；
 // 最后的「⋯」是当前分组的操作：导出、订阅、改名、删除
 func (a *application) groupChips(c *ui.Context, groups []string, counts map[string]int) {
-	p := pal(c)
 	ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 		for _, group := range groups {
 			count := counts[group]
 			if group == "全部" {
 				count = len(a.settings.Nodes)
 			}
-			chosen := a.nodeGroup == group
-			chip := ui.ButtonBase(c.Key("group-" + group)).Height(30).PaddingX(13).Gap(6).Radius(999).AlignItems(ui.Center).Label(group).FocusRing(false).Cursor(ui.CursorPointer)
-			bg, fg, sub := p.hover, p.text, p.muted
-			switch {
-			case chosen:
-				bg, fg, sub = p.text, p.bg, p.bg.Alpha(0.6)
-			case chip.Hovered():
-				bg = p.press
-			}
-			chip.Background(chip.AnimateColor("bg", bg, hoverFade))
+			chip := filterChip(c.Key("group-"+group), group, count, a.nodeGroup == group)
 			if group != "全部" && group != "未分组" {
 				chip.ContextMenu(func(m *ui.Menu) { a.groupMenu(m, group, false) })
 			}
-			chip.Children(func() {
-				ui.Text(c, group).FontSize(13).FontWeight(500).TextColor(fg).SingleLine()
-				ui.Text(c, fmt.Sprint(count)).FontSize(12).TextColor(sub).FontFeatures("tnum")
-			})
 			if chip.Clicked() {
 				a.nodeGroup = group
 				a.deleteConfirm = false

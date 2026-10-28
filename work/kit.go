@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -143,4 +144,49 @@ func rowWith(c *ui.Context, label, desc, problem string, below, control func()) 
 			ui.Row(c).Shrink(0).Gap(8).AlignItems(ui.Center).Children(control)
 		}
 	})
+}
+
+// searchBox MySpotify 侧栏那样的搜索框：放大镜、圆角浅底，有焦点时一圈强调色。focused 存上一帧有没有焦点，
+// 要跨帧。返回里面的输入框，要聚焦就对它调 Focus
+func searchBox(c *ui.Context, key, label, placeholder string, value *string, focused *bool) ui.Element {
+	p := pal(c)
+	var input ui.Element
+	field := ui.Row(c.Key(key)).Grow(1).MinWidth(140).Height(32).PaddingX(10).Gap(7).Radius(9).AlignItems(ui.Center)
+	if *focused {
+		field.Background(p.bg).Border(1, p.accent.Alpha(0.6)).Shadow(0, 0, 0, 3, p.accent.Alpha(0.2))
+	} else {
+		field.Background(p.hover).Border(1, p.hairline)
+	}
+	field.Children(func() {
+		ui.Icon(c, searchIcon).Size(14, 14).TextColor(p.muted)
+		input = ui.TextInputBase(c.Key("input"), value).Grow(1).Placeholder(placeholder).FontSize(13).Label(label)
+		*focused = input.Focused()
+		if *value != "" {
+			clear := ui.ButtonBase(c.Key("clear-search")).Size(18, 18).Center().Radius(9).Background(p.faint).Label("清空搜索").Cursor(ui.CursorPointer)
+			clear.Children(func() { ui.Icon(c, closeIcon).Size(10, 10).TextColor(p.bg) })
+			if clear.Clicked() {
+				*value = ""
+			}
+		}
+	})
+	return input
+}
+
+// filterChip MySpotify 首页「全部 / 音乐 / 播客」那样的胶囊，后面跟一个数，选中的反色
+func filterChip(c *ui.Context, label string, count int, chosen bool) ui.Element {
+	p := pal(c)
+	chip := ui.ButtonBase(c).Height(30).PaddingX(13).Gap(6).Radius(999).AlignItems(ui.Center).Label(label).FocusRing(false).Cursor(ui.CursorPointer)
+	bg, fg, sub := p.hover, p.text, p.muted
+	switch {
+	case chosen:
+		bg, fg, sub = p.text, p.bg, p.bg.Alpha(0.6)
+	case chip.Hovered():
+		bg = p.press
+	}
+	chip.Background(chip.AnimateColor("bg", bg, hoverFade))
+	chip.Children(func() {
+		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(fg).SingleLine()
+		ui.Text(c, fmt.Sprint(count)).FontSize(12).TextColor(sub).FontFeatures("tnum")
+	})
+	return chip
 }

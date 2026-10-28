@@ -15,69 +15,76 @@ import (
 )
 
 type application struct {
-	importing      bool
-	importText     string
-	importParsed   string
-	importObserved string
-	importChanged  time.Time
-	importResult   importResult
-	importTarget   string
-	importNew      bool
-	importNewName  string
-	fetching       bool   // 正在拉订阅（更新订阅）
-	parsing        bool   // 粘贴导入正在识别（订阅地址要联网）
-	lastImport     string // 这次打开 Shoes 后最后导入的内容，剪贴板还是它就不再预填
-	share          *shareState
-	notice         string
-	noticeUntil    time.Time
-	noticeSeq      int  // showNotice 一次加一，界面据此弹 Toast
-	toasted        int  // 已经弹过 Toast 的 noticeSeq
-	underTop       bool // 页面内容滚到了顶上那一条底下，那一条就显出磨砂边
-	picking        bool // 仪表盘上「切换节点」的浮层开着
-	searchFocused  bool // 上一帧节点搜索框有没有焦点，有就给它一圈强调色
-	nodeList       ui.ListState
-	addingGroup    bool
-	renaming       string // 正在改名的分组
-	groupDelete    string // 正在确认删除的分组
-	sortByDelay    bool
-	sortKey        string // 上次排序时的节点集合，测速中集合没变就沿用 sorted
-	sorted         []int
-	focusSearch    bool
-	reveal         bool // 编辑节点时把密码、UUID 显示出来
-	logSearch      string
-	groupDraft     string
-	groupError     string
-	nodeGroup      string
-	nodeSearch     string
-	revealSelected bool // 下一帧把正在用的节点卡片滚进视野（仪表盘「切换节点」过来时）
-	advanced       bool
-	settings       Settings
-	engine         *engine
-	window         *mygo.Window
-	busy           atomic.Bool
-	tab            string
-	shownTab       string // 上一帧显示的页，换页时清掉报错
-	editing        bool
-	editIndex      int
-	draft          Node
-	errorText      string
-	deleteConfirm  bool
-	storageOK      bool
-	settingsPath   string
-	kernelDraft    string
-	portDraft      string
-	kernelError    string
-	portError      string
-	portFocus      bool           // 上一帧端口输入框有没有焦点，失焦就保存
-	delays         map[string]int // delayKeys（节点配置）→ 毫秒；0 测速中，-1 超时
-	testing        bool
-	quitting       bool
-	openAtLogin    bool
-	tray           *mygo.Tray
-	trayOn         bool
-	trayTip        string
-	dash           dashboard
-	update         updater
+	importing                           bool
+	importText                          string
+	importParsed                        string
+	importObserved                      string
+	importChanged                       time.Time
+	importResult                        importResult
+	importTarget                        string
+	importNew                           bool
+	importNewName                       string
+	fetching                            bool   // 正在拉订阅（更新订阅）
+	parsing                             bool   // 粘贴导入正在识别（订阅地址要联网）
+	lastImport                          string // 这次打开 Shoes 后最后导入的内容，剪贴板还是它就不再预填
+	share                               *shareState
+	notice                              string
+	noticeUntil                         time.Time
+	noticeSeq                           int  // showNotice 一次加一，界面据此弹 Toast
+	toasted                             int  // 已经弹过 Toast 的 noticeSeq
+	underTop                            bool // 页面内容滚到了顶上那一条底下，那一条就显出磨砂边
+	picking                             bool // 仪表盘上「切换节点」的浮层开着
+	searchFocused                       bool // 上一帧节点搜索框有没有焦点，有就给它一圈强调色
+	nodeList                            ui.ListState
+	logPane                             int // 日志页显示的是连接记录（paneFlows）还是运行日志（paneLogs）
+	panePick                            choice[int]
+	flowFilter                          int // 连接记录：0 全部，1 只看代理，2 只看直连
+	flowSearch                          string
+	flowSearchFocused, logSearchFocused bool
+	focusLogSearch                      bool // 日志页按了 ⌘F，下一帧把焦点放进这一块的搜索框
+	flowList, logList                   ui.ListState
+	addingGroup                         bool
+	renaming                            string // 正在改名的分组
+	groupDelete                         string // 正在确认删除的分组
+	sortByDelay                         bool
+	sortKey                             string // 上次排序时的节点集合，测速中集合没变就沿用 sorted
+	sorted                              []int
+	focusSearch                         bool
+	reveal                              bool // 编辑节点时把密码、UUID 显示出来
+	logSearch                           string
+	groupDraft                          string
+	groupError                          string
+	nodeGroup                           string
+	nodeSearch                          string
+	revealSelected                      bool // 下一帧把正在用的节点卡片滚进视野（仪表盘「切换节点」过来时）
+	advanced                            bool
+	settings                            Settings
+	engine                              *engine
+	window                              *mygo.Window
+	busy                                atomic.Bool
+	tab                                 string
+	shownTab                            string // 上一帧显示的页，换页时清掉报错
+	editing                             bool
+	editIndex                           int
+	draft                               Node
+	errorText                           string
+	deleteConfirm                       bool
+	storageOK                           bool
+	settingsPath                        string
+	kernelDraft                         string
+	portDraft                           string
+	kernelError                         string
+	portError                           string
+	portFocus                           bool           // 上一帧端口输入框有没有焦点，失焦就保存
+	delays                              map[string]int // delayKeys（节点配置）→ 毫秒；0 测速中，-1 超时
+	testing                             bool
+	quitting                            bool
+	openAtLogin                         bool
+	tray                                *mygo.Tray
+	trayOn                              bool
+	trayTip                             string
+	dash                                dashboard
+	update                              updater
 	// 下面这些是控件的跨帧绑定，见 choice
 	hy2SpeedPick            choice[float64]
 	themePick, modePick     choice[int]
@@ -86,7 +93,9 @@ type application struct {
 	securityPick, extraPick choice[string]
 	logPick, sortPick       choice[int]
 	logFilter               int         // 0 全部，1 只看重要（藏起连接异常）
-	dashOn                  atomic.Bool // 仪表盘正显示着，才去拉连接数
+	dashOn                  atomic.Bool // 仪表盘正显示着，连接数、内存变了才重画
+	connsOn                 atomic.Bool // 日志页的「连接」正显示着，连接记录变了才重画
+	flows                   flowBook    // 每个域名走了直连还是代理，watchConnections 每秒记一次
 }
 
 func (a *application) async(fn func()) {
@@ -488,7 +497,7 @@ func main() {
 			Content:              ui.View(a.view),
 		})
 		a.createTray()
-		a.window.OnHide(func() { a.dashOn.Store(false) })
+		a.window.OnHide(func() { a.dashOn.Store(false); a.connsOn.Store(false) })
 		go a.watchTraffic()
 		go a.watchConnections()
 		if a.update.enabled {

@@ -24,9 +24,13 @@ func shellTestApp(t *testing.T) *application {
 func TestIdlePagesAskForNoFrames(t *testing.T) {
 	applyTheme = func(string) {}
 	for _, dark := range []bool{false, true} {
-		for _, tab := range tabs {
+		for i, tab := range append(tabs, "日志") {
 			a := shellTestApp(t)
 			a.tab = tab
+			a.flows.record([]flowConn{flow("1", "www.google.com", viaNode, ruleRest, 1, 1)}, time.Now())
+			if i == len(tabs) {
+				a.logPane = paneLogs // 最后再看一遍日志页的另一块
+			}
 			tester := ui.NewTester(a.view, 880, 640)
 			tester.SetDark(dark)
 			tester.SetTitleBar(ui.TitleBar{Height: 50, Left: 78})

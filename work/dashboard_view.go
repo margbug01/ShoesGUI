@@ -91,7 +91,7 @@ func (a *application) connectionCard(c *ui.Context, status string, ready, proxy,
 					link := ui.ButtonBase(c.Key("open-logs")).Label("打开日志").Cursor(ui.CursorPointer)
 					link.Children(func() { ui.Text(c, "点这里看日志").FontSize(12.5).TextColor(p.bad).Underline() })
 					if link.Clicked() {
-						a.tab = "日志"
+						a.tab, a.logPane = "日志", paneLogs
 					}
 				} else if sub != "" {
 					ui.Text(c, sub).FontSize(12.5).TextColor(p.muted).FontFeatures("tnum").LineHeight(1.4)

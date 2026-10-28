@@ -152,6 +152,11 @@ func TestLogsCopyAndClear(t *testing.T) {
 	a.engine.connEvent("对方重置了连接")
 	tester := ui.NewTester(a.view, 820, 1000)
 	tester.Frame()
+	if err := tester.Click("运行日志"); err != nil { // 日志页先显示的是连接记录
+		t.Fatal(err)
+	}
+	tester.Frame()
+	tester.Frame()
 	if err := tester.Click("复制"); err != nil {
 		t.Fatal(err)
 	}

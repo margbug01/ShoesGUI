@@ -63,15 +63,17 @@ type logEntry struct {
 	count int
 }
 
-func (l logEntry) String() string {
-	text := l.text
-	if l.conn != "" {
-		text = "连接异常：" + l.conn
-		if l.count > 1 {
-			text = fmt.Sprintf("连接异常 ×%d：%s", l.count, l.conn)
-		}
+func (l logEntry) String() string { return l.at.Format("15:04:05") + "  " + l.message() }
+
+// message 去掉时间的那部分
+func (l logEntry) message() string {
+	if l.conn == "" {
+		return l.text
 	}
-	return l.at.Format("15:04:05") + "  " + text
+	if l.count > 1 {
+		return fmt.Sprintf("连接异常 ×%d：%s", l.count, l.conn)
+	}
+	return "连接异常：" + l.conn
 }
 
 // connEvent 记一条连接异常：一分钟内有同样原因的就加一，并挪到最新的位置

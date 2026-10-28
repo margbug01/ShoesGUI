@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"fmt"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -77,7 +76,14 @@ func topBar(c *ui.Context) float32 {
 func (a *application) view(c *ui.Context) {
 	registerFonts()
 	// 快捷键。输入框有焦点时按键先给输入框，所以 Ctrl+V 在输入框里照常是粘贴
-	c.OnShortcut(ui.Cmd, ui.KeyF, func() { a.share = nil; a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true })
+	c.OnShortcut(ui.Cmd, ui.KeyF, func() {
+		if a.tab == "日志" {
+			a.focusLogSearch = true
+			return
+		}
+		a.share = nil
+		a.tab, a.editing, a.importing, a.focusSearch = "代理", false, false, true
+	})
 	c.OnShortcut(ui.Cmd, ui.KeyN, func() { a.tab = "代理"; a.beginEdit(-1) })
 	if a.nodeListShown() {
 		c.OnShortcut(ui.Cmd, ui.KeyV, a.openImport)
@@ -95,6 +101,7 @@ func (a *application) view(c *ui.Context) {
 	status, logs, ready, proxy := a.engine.snapshot()
 	busy := a.busy.Load()
 	a.dashOn.Store(a.tab == "仪表盘")
+	a.connsOn.Store(a.tab == "日志" && a.logPane == paneFlows)
 	if a.tab != a.shownTab {
 		if a.shownTab == "设置" { // 输入框里改了还没回车就换页，也照样存下
 			a.savePort()
@@ -112,6 +119,8 @@ func (a *application) view(c *ui.Context) {
 			top := topBar(c)
 			if a.nodeListShown() {
 				a.nodesPage(c, top) // 节点列表自己就是整页的滚动区，只建看得见的行
+			} else if a.tab == "日志" {
+				a.logsPage(c, top, logs, ready, proxy) // 连接记录、运行日志也是
 			} else {
 				ui.Scroll(c.Key("page-"+a.tab)).FillWidth().Grow(1).Padding(top+4, pagePad, 32, pagePad).ScrollbarInsets(top, 0, 0, 0).Children(func() {
 					a.startMark(c, top)
@@ -124,8 +133,6 @@ func (a *application) view(c *ui.Context) {
 							a.nodesView(c)
 						case "设置":
 							a.settingsView(c)
-						case "日志":
-							a.logView(c, logs)
 						}
 					})
 				})
@@ -167,10 +174,10 @@ func (a *application) pageHeader(c *ui.Context, status string, ready, proxy, bus
 		heading(c, title).Grow(1).MinWidth(0)
 		switch {
 		case a.tab == "日志":
-			p, v, changed := a.logPick.bind(a.logFilter)
-			segmented(c.Key("log-filter"), p, "全部", "只看重要")
+			pick, v, changed := a.panePick.bind(a.logPane)
+			segmented(c.Key("log-pane"), pick, "连接记录", "运行日志")
 			if changed {
-				a.logFilter = v
+				a.logPane = v
 			}
 		case a.tab == "代理" && !a.editing && !a.importing && a.share == nil:
 			visible := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
@@ -496,53 +503,3 @@ func (a *application) saveKernel() {
 }
 
 // logView 最新的在上面。「只看重要」藏起连接异常，顶上说一句藏了多少。能搜、能选中复制、能一键复制和清空，报错标红
-func (a *application) logView(c *ui.Context, logs []logEntry) {
-	t := c.Theme()
-	query := strings.ToLower(strings.TrimSpace(a.logSearch))
-	hidden := 0
-	var shown []logEntry
-	for i := len(logs) - 1; i >= 0; i-- {
-		if a.logFilter == 1 && logs[i].conn != "" {
-			hidden += logs[i].count
-			continue
-		}
-		if query != "" && !strings.Contains(strings.ToLower(logs[i].String()), query) {
-			continue
-		}
-		shown = append(shown, logs[i])
-	}
-	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Padding(0, 0, 6, 0).Children(func() {
-		ui.TextInput(c.Key("log-search"), &a.logSearch).Grow(1).Placeholder("搜索日志").Label("搜索日志")
-		if ui.Button(c.Key("log-copy"), "复制").Disabled(len(shown) == 0).Tooltip("复制下面显示的日志，发给别人帮忙看").Clicked() {
-			lines := make([]string, len(shown))
-			for i, entry := range shown {
-				lines[i] = entry.String()
-			}
-			writeClipboard(strings.Join(lines, "\n"))
-			a.showNotice(fmt.Sprintf("已复制 %d 条日志", len(shown)))
-		}
-		if ui.Button(c.Key("log-clear"), "清空").Disabled(len(logs) == 0).Clicked() {
-			a.engine.clearLogs()
-		}
-	})
-	if hidden > 0 {
-		ui.Text(c, fmt.Sprintf("已藏起 %d 条连接异常：单条连接没正常收尾，不影响别的连接", hidden)).FontSize(12).TextColor(t.TextMuted).Padding(0, 0, 4, 0)
-	}
-	if len(shown) == 0 {
-		text := "暂无日志"
-		if query != "" {
-			text = "没有匹配的日志"
-		}
-		ui.Text(c, text).FontSize(13).TextColor(t.TextMuted)
-		return
-	}
-	ui.Column(c).FillWidth().Gap(4).Selectable().Children(func() {
-		for _, entry := range shown {
-			color := t.TextMuted
-			if entry.bad() {
-				color = t.Danger
-			}
-			ui.Text(c, entry.String()).FontSize(12).TextColor(color)
-		}
-	})
-}
