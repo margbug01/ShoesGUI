@@ -1,8 +1,10 @@
 <div align="center">
 
-<img src="docs/icon.png" width="128" alt="Shoes 图标">
+<img src="docs/icon.png" width="128" alt="MyShoes 图标">
 
-# Shoes
+# MyShoes
+
+原名 Shoes / ShoesGUI。macOS 使用系统默认字体；Windows 继续使用 MiSans。配置目录、钥匙串标识、单实例锁、仓库和更新签名保持兼容旧版。安装包和应用显示名为 MyShoes；内部程序仍叫 ShoesGUI，保证旧版更新后能正常重启。
 
 一个顺手的 Windows / macOS 代理客户端
 
@@ -16,7 +18,7 @@
 
 ## 为什么用它
 
-**打开就能用。** 内核随 Shoes 一起常驻，仪表盘上的「连接」只负责接管系统代理。没点连接也能测速，也能把 `127.0.0.1:10808` 直接填给别的程序。
+**打开就能用。** 内核随 MyShoes 一起常驻，仪表盘上的「连接」只负责接管系统代理。没点连接也能测速，也能把 `127.0.0.1:10808` 直接填给别的程序。
 
 **订阅是活的。** 订阅地址绑在分组上，点「更新订阅」时同名节点就地换成新配置，新出的补上，下架的删掉；你手动加进这一组的节点不会被碰。读订阅时报的是 v2rayN 的 User-Agent，机场会回分享链接，而不是一整份 Clash YAML。
 
@@ -26,13 +28,13 @@
 
 **安静地待在托盘。** 关窗口只是收进托盘（macOS 上是顶部菜单栏），右键能连接断开、切节点、切模式；图标灰色是没接管，绿色是接管中。
 
-**看得到每个网站怎么走。** 日志页的「连接记录」像 v2rayN 的连接页，列出每个域名走了直连还是经哪个节点、命中哪条规则（国内域名、国内 IP、局域网、其余）、连了几次、多少流量，能只看代理或只看直连、能搜，右键能复制域名或断开它的连接。记录只放在内存里，退出 Shoes 就清空。
+**看得到每个网站怎么走。** 日志页的「连接记录」像 v2rayN 的连接页，列出每个域名走了直连还是经哪个节点、命中哪条规则（国内域名、国内 IP、局域网、其余）、连了几次、多少流量，能只看代理或只看直连、能搜，右键能复制域名或断开它的连接。记录只放在内存里，退出 MyShoes 就清空。
 
 **日志说人话。** 常见的单条连接报错翻成中文、一分钟内合并计数，默认只看重要的，报错标红，能搜、能选中复制、能一键复制给别人看。
 
 **数据留在本机。** 节点和设置加密后存在本机：Windows 用 DPAPI，放在 `%APPDATA%\ShoesGUI`；macOS 用 AES-256-GCM，密钥放在登录钥匙串里，数据放在 `~/Library/Application Support/ShoesGUI`。改系统代理前先记一份恢复日志，就算程序意外退出，下次打开也会把原来的代理设置还回去。
 
-**更新点一下就好。** 有新版本时侧栏会提示，到「设置 › 关于」点「更新并重启」，Shoes 会下载、校验签名、替换文件，然后自己重新打开；更新前接管着系统代理的话，重新打开后接着接管。更新包都用发布者的私钥签过名，签名对不上就不装。下载走 Shoes 自己的内核（国内直连 GitHub 常常很慢），节点不通再直连。更新时只下载变动的部分，内核也跟着一起更新。0.2.0 及更早的版本要手动下载一次新版，之后就能在应用里更新。
+**更新点一下就好。** 有新版本时侧栏会提示，到「设置 › 关于」点「更新并重启」，MyShoes 会下载、校验签名、替换文件，然后自己重新打开；更新前接管着系统代理的话，重新打开后接着接管。更新包都用发布者的私钥签过名，签名对不上就不装。下载走 MyShoes 自己的内核（国内直连 GitHub 常常很慢），节点不通再直连。更新时只下载变动的部分，内核也跟着一起更新。0.2.0 及更早的版本要手动下载一次新版，之后就能在应用里更新。
 
 ## 截图
 
@@ -58,8 +60,8 @@
 ## 快速开始
 
 1. 从 [Releases](https://github.com/margbug01/ShoesGUI/releases) 下载对应平台的包：
-   - **Windows**：`Shoes-<版本>-windows-x64.zip`，解压后双击 `ShoesGUI.exe`，shoes 内核 `shoes.exe` 已经放在旁边。
-   - **macOS**（Apple 芯片）：`Shoes-<版本>-macos-arm64.dmg`，把 ShoesGUI 拖进「应用程序」再打开，内核已经打包在 app 里。第一次打开被系统拦下，见下面的常见问题。
+   - **Windows**：`MyShoes-<版本>-windows-x64.zip`，解压后双击 `ShoesGUI.exe`，shoes 内核 `shoes.exe` 已经放在旁边。
+   - **macOS**（Apple 芯片）：`MyShoes-<版本>-macos-arm64.dmg`，把 MyShoes 拖进「应用程序」再打开，内核已经打包在 app 里。第一次打开被系统拦下，见下面的常见问题。
 2. 在「代理」页点剪贴板图标，或者直接按 `Ctrl+V`（macOS 是 `⌘V`），粘贴订阅地址或节点链接。看一眼预览，点「导入」。
 3. 点闪电图标测速，挑一个快的（或者点「用最快的」），回到「仪表盘」点「连接」。
 
@@ -81,7 +83,7 @@
 
 ## 自定义直连域名
 
-在用户数据目录（Windows 是 `%APPDATA%\ShoesGUI`，macOS 是 `~/Library/Application Support/ShoesGUI`）创建 `direct-domains.txt`，每行一个域名，自动包含所有子域名。支持空行和以 `#` 开头的注释；不填写协议、路径或 `*.`。这些规则优先于国内规则和兜底，固定直连，不受全局模式切换影响。修改后重启 ShoesGUI 生效。文件不存在时保持原有行为，无效域名会阻止内核启动并提示是哪一个。命中这些规则的连接在日志页的「连接记录」里标着「自定义直连」。
+在用户数据目录（Windows 是 `%APPDATA%\ShoesGUI`，macOS 是 `~/Library/Application Support/ShoesGUI`）创建 `direct-domains.txt`，每行一个域名，自动包含所有子域名。支持空行和以 `#` 开头的注释；不填写协议、路径或 `*.`。这些规则优先于国内规则和兜底，固定直连，不受全局模式切换影响。修改后重启 MyShoes 生效。文件不存在时保持原有行为，无效域名会阻止内核启动并提示是哪一个。命中这些规则的连接在日志页的「连接记录」里标着「自定义直连」。
 
 ## 分享到手机或其他客户端
 
@@ -115,13 +117,13 @@
 <details>
 <summary>订阅在 v2rayN 里能用，导进来却是一堆奇怪的节点？</summary>
 
-很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。Shoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.4`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
+很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。MyShoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.4`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
 </details>
 
 <details>
 <summary>显示「已连接」，网页却打不开？</summary>
 
-「已连接」只代表系统代理已经交给 Shoes，不代表当前节点一定通。先在代理页测个速，再看仪表盘的出口 IP 卡和日志页的红字；某个网站打不开时，在日志页的「连接记录」里搜它的域名，看它走的是直连还是哪个节点。
+「已连接」只代表系统代理已经交给 MyShoes，不代表当前节点一定通。先在代理页测个速，再看仪表盘的出口 IP 卡和日志页的红字；某个网站打不开时，在日志页的「连接记录」里搜它的域名，看它走的是直连还是哪个节点。
 </details>
 
 <details>
@@ -139,7 +141,7 @@ shoes 内核在 Windows 上还不支持 TUN，所以界面上干脆没放这个�
 <details>
 <summary>「设置 › 关于」说这一份不能自己更新？</summary>
 
-Shoes 要能改写自己所在的位置才能更新。直接从 dmg 里打开的、Windows 上放在 `Program Files` 这类没有写入权限的文件夹里的，都更新不了：macOS 上把 app 拖进「应用程序」再打开，Windows 上解压到自己的文件夹（比如桌面或 `D:\Shoes`）就行。自己用 `go build` 编的开发版也不能更新。
+MyShoes 要能改写自己所在的位置才能更新。直接从 dmg 里打开的、Windows 上放在 `Program Files` 这类没有写入权限的文件夹里的，都更新不了：macOS 上把 app 拖进「应用程序」再打开，Windows 上解压到自己的文件夹（比如桌面或 `D:\MyShoes`）就行。自己用 `go build` 编的开发版也不能更新。
 </details>
 
 <details>
@@ -151,7 +153,7 @@ app 没有 Apple 开发者签名，也没有经过公证，第一次打开会被
 <details>
 <summary>macOS 上接管系统代理会改哪些地方？</summary>
 
-用系统自带的 `networksetup`，改每个已启用网络服务的 HTTP / HTTPS 代理和例外列表（本机、`*.local`、局域网网段），同时关掉自动代理（PAC）。停止或退出时，只把 Shoes 改过、你之后没再动过的设置还原。原来就设了需要认证的代理时，会直接提示无法接管，不去改它。
+用系统自带的 `networksetup`，改每个已启用网络服务的 HTTP / HTTPS 代理和例外列表（本机、`*.local`、局域网网段），同时关掉自动代理（PAC）。停止或退出时，只把 MyShoes 改过、你之后没再动过的设置还原。原来就设了需要认证的代理时，会直接提示无法接管，不去改它。
 </details>
 
 ## 从源码构建
@@ -174,7 +176,7 @@ exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里�
 ```sh
 cd work
 go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon assets/icon.png --manifest gui \
-  --product-name Shoes --file-description Shoes --product-version 0.4.0 --file-version 0.4.0 --original-filename ShoesGUI.exe
+  --product-name MyShoes --file-description MyShoes --product-version 0.4.1 --file-version 0.4.1 --original-filename ShoesGUI.exe
 ```
 
 ### macOS
@@ -206,8 +208,8 @@ go run github.com/egoist/mygo/cmd/mygo@v0.6.4 build
    ```
 
 5. 在 GitHub 上建 `v<版本>` 的 Release，先存成草稿，把附件都传上去，确认后再发布并设为 Latest。应用读的是最新 Release 里的清单，草稿对它不可见，所以不会出现清单已经能读到、压缩包还没传完的情况。
-   - `outputs/darwin-arm64/`：dmg（改名为 `Shoes-v<版本>-macos-arm64.dmg`）、`shoesgui-<版本>-darwin-arm64.tar.gz`、`*.delta`、`update-darwin-arm64.json`
-   - `outputs/windows-amd64/`：把 `ShoesGUI.exe`、`shoes.exe`、`LICENSE`、`licenses/`、`使用说明.md` 放进 `Shoes/` 文件夹打成 `Shoes-v<版本>-windows-x64.zip`，另附单独的 `ShoesGUI.exe`；再加上 `shoesgui-<版本>-windows-amd64.tar.gz`、`*.delta`、`update-windows-amd64.json`
+   - `outputs/darwin-arm64/`：dmg（改名为 `MyShoes-v<版本>-macos-arm64.dmg`）、`shoesgui-<版本>-darwin-arm64.tar.gz`、`*.delta`、`update-darwin-arm64.json`
+   - `outputs/windows-amd64/`：把 `ShoesGUI.exe`、`shoes.exe`、`LICENSE`、`licenses/`、`使用说明.md` 放进 `Shoes/` 文件夹打成 `MyShoes-v<版本>-windows-x64.zip`，另附单独的 `ShoesGUI.exe`；再加上 `shoesgui-<版本>-windows-amd64.tar.gz`、`*.delta`、`update-windows-amd64.json`
 
 `*.delta` 是从前几个版本到这一版的增量包，`mygo build` 会读已发布的版本自动做出来，应用更新时优先下载它，通常只有整包的零头。
 
@@ -236,4 +238,4 @@ CHANGELOG.md       更新记录，也是应用里显示的更新说明
 
 ## 许可证
 
-Shoes 以 [GPL-3.0](LICENSE) 发布，和内置的国内规则数据是同一个许可：可以自由使用、修改和再发布，再发布时也要同样开源。随附的 shoes 内核、MyGo、MiSans 字体等第三方组件按各自的许可证分发，原文都在 [`outputs/licenses/`](outputs/licenses/)。
+MyShoes 以 [GPL-3.0](LICENSE) 发布，和内置的国内规则数据是同一个许可：可以自由使用、修改和再发布，再发布时也要同样开源。随附的 shoes 内核、MyGo、MiSans 字体等第三方组件按各自的许可证分发，原文都在 [`outputs/licenses/`](outputs/licenses/)。

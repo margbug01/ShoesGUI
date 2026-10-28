@@ -1,3 +1,5 @@
+//go:build !darwin
+
 package main
 
 import (
@@ -12,6 +14,8 @@ var fontRegular []byte
 
 //go:embed fonts/MiSans-Bold.subset.ttf
 var fontBold []byte
+
+const appFont = "MiSans, system-ui"
 
 var fontsOnce sync.Once
 

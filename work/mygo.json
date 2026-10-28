@@ -1,7 +1,7 @@
 {
   "name": "ShoesGUI",
   "identifier": "dev.local.shoesgui",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "out": "../outputs",
   "icon": "assets/icon.png",
   "resources": [
@@ -13,5 +13,12 @@
     "publicKey": "Q8c1HYBuqS1CZHUd4QSDMuMgLlnrNEm3FTAj81e5IKU=",
     "github": "margbug01/ShoesGUI",
     "changelog": "../CHANGELOG.md"
+  },
+  "macos": {
+    "infoPlist": {
+      "CFBundleDisplayName": "MyShoes",
+      "CFBundleName": "MyShoes"
+    },
+    "dmgTitle": "MyShoes"
   }
 }

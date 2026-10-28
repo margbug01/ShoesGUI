@@ -22,7 +22,7 @@ func trayIcon(on bool) []byte {
 }
 
 func (a *application) createTray() {
-	tray, err := mygo.NewTray(mygo.TrayOptions{Icon: trayIcon(false), ToolTip: "Shoes"})
+	tray, err := mygo.NewTray(mygo.TrayOptions{Icon: trayIcon(false), ToolTip: "MyShoes"})
 	if err != nil {
 		a.engine.event("", "托盘图标创建失败")
 		return
@@ -42,7 +42,7 @@ func (a *application) createTray() {
 				Click: func(*mygo.MenuItem, *mygo.Window) { a.setMode(key) }})
 		}
 		menu := mygo.NewMenu([]*mygo.MenuItem{
-			{Label: "打开 Shoes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
+			{Label: "打开 MyShoes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
 			{Label: toggle, Disabled: a.busy.Load() || len(a.settings.Nodes) == 0, Click: func(*mygo.MenuItem, *mygo.Window) { a.toggleConnect() }},
 			{Label: "节点", Submenu: a.trayNodes(), Disabled: len(a.settings.Nodes) == 0},
 			{Label: "出站模式", Submenu: modeItems},
@@ -93,9 +93,9 @@ func (a *application) syncTray() {
 		return
 	}
 	_, _, _, proxy := a.engine.snapshot()
-	tip := "Shoes · 未启动"
+	tip := "MyShoes · 未启动"
 	if proxy {
-		tip = "Shoes · 运行中"
+		tip = "MyShoes · 运行中"
 		if node, ok := a.selectedNode(); ok {
 			tip += " · " + node.Name
 		}
@@ -118,7 +118,7 @@ func (a *application) hintTray() {
 	next := a.settings
 	next.TrayHinted = true
 	a.save(next)
-	go mygo.NewNotification(mygo.NotificationOptions{Title: "Shoes 还在托盘里运行", Body: "关窗口只是收到托盘，代理照常工作。要退出请右键托盘图标。"}).Show()
+	go mygo.NewNotification(mygo.NotificationOptions{Title: "MyShoes 还在托盘里运行", Body: "关窗口只是收到托盘，代理照常工作。要退出请右键托盘图标。"}).Show()
 }
 
 func (a *application) showWindow() {

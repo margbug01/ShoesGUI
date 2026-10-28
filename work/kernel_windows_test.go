@@ -14,6 +14,12 @@ func TestWindowsBundledKernel(t *testing.T) {
 	if !bundledKernel(filepath.Join(dir, "shoes.exe")) || !bundledKernel(filepath.Join(dir, "SHOES.EXE")) {
 		t.Fatal("kernel next to ShoesGUI.exe not recognised")
 	}
+	if err := os.Rename(filepath.Join(dir, "ShoesGUI.exe"), filepath.Join(dir, "MyShoes.exe")); err != nil {
+		t.Fatal(err)
+	}
+	if !bundledKernel(filepath.Join(dir, "shoes.exe")) {
+		t.Fatal("kernel next to MyShoes.exe not recognised")
+	}
 	if bundledKernel(filepath.Join(other, "shoes.exe")) {
 		t.Fatal("a kernel the user put elsewhere is not a bundled one")
 	}

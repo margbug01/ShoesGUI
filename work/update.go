@@ -273,7 +273,7 @@ func (a *application) updateRows(c *ui.Context) {
 	}
 	switch {
 	case !u.enabled:
-		rowWith(c, "Shoes "+current, "这一份不能自己更新（开发版，或所在文件夹没有写入权限），新版本请到 GitHub 下载", u.err, nil, func() {
+		rowWith(c, "MyShoes "+current, "这一份不能自己更新（开发版，或所在文件夹没有写入权限），新版本请到 GitHub 下载", u.err, nil, func() {
 			ui.Link(c, "打开下载页", releasesPage)
 		})
 	case u.stage == updateAvailable:
@@ -312,7 +312,7 @@ func (a *application) updateRows(c *ui.Context) {
 			}
 			desc = "已是最新 · " + at + " 检查过"
 		}
-		rowWith(c, "Shoes "+current, desc, u.err, nil, func() {
+		rowWith(c, "MyShoes "+current, desc, u.err, nil, func() {
 			label := "检查更新"
 			if u.stage == updateChecking {
 				label = "检查中…"

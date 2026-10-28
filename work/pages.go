@@ -91,7 +91,7 @@ func (a *application) view(c *ui.Context) {
 		c.OnShortcut(0, ui.KeyEscape, a.leaveSubpage)
 	}
 	theme := *c.Theme()
-	theme.Font = "MiSans, system-ui"
+	theme.Font = appFont
 	p := paletteFor(theme.Dark)
 	applyPalette(&theme, p)
 	c.SetTheme(&theme)
@@ -224,7 +224,7 @@ func (a *application) sidebar(c *ui.Context, status string, ready, proxy, busy b
 			// 没有红绿灯的地方（Windows）左上角空着，放应用的名字
 			ui.Row(c).Padding(14, 8, 14, 8).Gap(9).AlignItems(ui.Center).Shrink(0).Children(func() {
 				ui.Image(c, logo).Size(22, 22)
-				ui.Text(c, "Shoes").FontSize(14).FontWeight(600)
+				ui.Text(c, "MyShoes").FontSize(14).FontWeight(600)
 			})
 		}
 		for i, label := range tabs {

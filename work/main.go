@@ -420,9 +420,11 @@ func configureRenderer() {
 
 func main() {
 	configureRenderer()
+	mygo.App.SetName("ShoesGUI")
 	if !mygo.App.RequestSingleInstanceLock() {
 		return // 已经在跑的那个会把窗口叫出来
 	}
+	mygo.App.SetName("MyShoes")
 	dir, err := dataDir()
 	if err != nil {
 		return
@@ -465,7 +467,7 @@ func main() {
 	for _, path := range leftovers {
 		os.Remove(path)
 	}
-	e.event("", "Shoes 已启动")
+	e.event("", "MyShoes 已启动")
 	a.update.enabled = mygo.Updater.Enabled()
 	resume := takeResume(dir, time.Now()) // 更新前接管着系统代理，重启后接着接管
 	if len(a.settings.Nodes) > 0 {
@@ -485,7 +487,7 @@ func main() {
 	mygo.App.WhenReady(func() {
 		a.openAtLogin = mygo.App.OpenAtLogin()
 		a.window = mygo.NewWindow(mygo.WindowOptions{
-			Title: "Shoes", Width: 880, Height: 680, MinWidth: 680, MinHeight: 500, DisableMaximize: true, StateKey: "main",
+			Title: "MyShoes", Width: 880, Height: 680, MinWidth: 680, MinHeight: 500, DisableMaximize: true, StateKey: "main",
 			Hidden: mygo.App.WasOpenedAtLogin(),
 			// 隐藏系统标题栏，页面一直铺到窗口顶上：macOS 的红绿灯挪进侧栏左上角，
 			// Windows 的最小化、关闭还是系统自己的，占满顶上 winBarHeight 那一条

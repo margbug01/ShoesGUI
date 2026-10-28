@@ -41,7 +41,7 @@ func validKernel(path string) error {
 func recoverKernels(dir string) {}
 
 const kernelName = "shoes.exe"
-const kernelHint = "一般会自动找到，和 ShoesGUI.exe 放在一起就行"
+const kernelHint = "一般会自动找到，和 MyShoes.exe 放在一起就行"
 
 var kernelExtensions = []string{"exe"}
 
@@ -60,8 +60,12 @@ func bundledKernel(path string) bool {
 	if !strings.EqualFold(filepath.Base(path), kernelName) {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(filepath.Dir(path), "ShoesGUI.exe"))
-	return err == nil
+	for _, name := range []string{"MyShoes.exe", "ShoesGUI.exe"} {
+		if _, err := os.Stat(filepath.Join(filepath.Dir(path), name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func kernelCandidates(executable string) []string {

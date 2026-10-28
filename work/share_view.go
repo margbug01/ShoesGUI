@@ -19,7 +19,7 @@ type shareState struct {
 }
 
 var saveShareDialog = func(window *mygo.Window, extension string) (string, error) {
-	return mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: window, Title: "保存分享内容", DefaultPath: "Shoes-share." + extension, Filters: []mygo.FileFilter{{Name: extension, Extensions: []string{extension}}}})
+	return mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: window, Title: "保存分享内容", DefaultPath: "MyShoes-share." + extension, Filters: []mygo.FileFilter{{Name: extension, Extensions: []string{extension}}}})
 }
 
 func (a *application) openShare(nodes []Node, source string, title string) {
