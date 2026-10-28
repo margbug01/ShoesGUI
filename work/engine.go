@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// engine 管一个常驻内核：应用打开就跑，配置变了就重启；「启动/停止」只是接管和恢复系统代理
+// engine 管一个常驻内核：应用打开就跑，配置变了就地换（改端口、换内核才重启）；「连接/断开」只是接管和恢复系统代理
 type engine struct {
 	op        sync.Mutex // 内核进程和系统代理一次只改一样
 	mu        sync.Mutex // 保护下面的状态
@@ -32,6 +32,8 @@ type engine struct {
 	gen       int       // 内核每次就绪加一，换了内核的地方据此刷新
 	want      *Settings
 	kick      chan struct{}
+	kernel    string     // 在跑的内核是哪个文件，换了就得整个重启
+	reloading chan error // 就地换配置时等内核回话，见 reloadLine
 
 	cmd    *exec.Cmd
 	done   chan struct{}
@@ -164,8 +166,16 @@ func (e *engine) worker() {
 	}
 }
 
-// restart 换内核时系统代理保持接管，新内核起不来才恢复
+// restart 让内核用上 s。内核在跑、端口和内核文件都没变时就地换配置（reconfigure），连接不断；
+// 换不了或者没换成才整个重启。系统代理一直保持接管，新内核起不来才恢复
 func (e *engine) restart(s Settings) {
+	err := e.reconfigure(s)
+	if err == nil {
+		return
+	}
+	if !errors.Is(err, errNeedsRestart) {
+		e.event("", err.Error()+"，改为重启内核")
+	}
 	e.killKernel()
 	if err := e.launch(s); err != nil {
 		if rerr := e.restoreProxy(); rerr != nil {
@@ -184,6 +194,107 @@ func (e *engine) restart(s Settings) {
 		e.since = since // 只是换了端口，运行时长接着算
 		e.mu.Unlock()
 	}
+}
+
+// errNeedsRestart 这次改动没法就地换，要整个重启内核：内核没在跑，或者改了本地端口、换了内核文件
+var errNeedsRestart = errors.New("需要重启内核")
+
+// reconfigure 让在跑的内核就地换成 s 的配置：改写同一份配置文件，再叫内核重新读（askReload）。
+// 内核先在一边把新配置准备好，旧的照常转发；准备好了才换监听，前后几毫秒。
+// 已有的连接按旧配置跑完（最多 5 分钟），出站的 HY2 连接也给它们留着，Clash API 端口和密钥不变。
+// 以前是杀掉内核再起一个，换个订阅浏览器、下载、长连接全断，各个程序都得重连一遍
+func (e *engine) reconfigure(s Settings) error {
+	e.mu.Lock()
+	ready, port, kernel, rt := e.ready, e.port, e.kernel, e.api
+	e.mu.Unlock()
+	if !ready || e.cmd == nil || port != s.Port || kernel != s.Kernel {
+		return errNeedsRestart
+	}
+	data, err := e.configFor(s, rt)
+	if err != nil {
+		return errNeedsRestart // 配置本身不对，走重启那条路，在那里报出来
+	}
+	before, _ := e.current(groupSelect)
+	wait := make(chan error, 1)
+	e.mu.Lock()
+	e.reloading = wait
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.reloading = nil
+		e.mu.Unlock()
+	}()
+	if err := atomicFile(e.config, data); err != nil {
+		return errors.New("改写内核配置失败")
+	}
+	if err := askReload(e.cmd.Process); err != nil {
+		return errors.New("没能通知内核换配置")
+	}
+	select {
+	case err := <-wait:
+		if err != nil {
+			return fmt.Errorf("内核没接受新配置：%v", err)
+		}
+	case <-e.done:
+		return errors.New("内核换配置时退出了")
+	case <-time.After(reloadWait):
+		return fmt.Errorf("内核 %d 秒内没换好配置", int(reloadWait/time.Second))
+	}
+	// 内核会记住从 API 选过的节点，换配置后照旧用；按设置再选一遍，免得和设置对不上
+	selected := selectedName(s, kernelNames(s.Nodes))
+	domestic, other := modeTargets(s.Mode)
+	for _, pick := range [][2]string{{groupSelect, selected}, {groupDomestic, domestic}, {groupOther, other}} {
+		if err := e.pick(pick[0], pick[1]); err != nil {
+			return errors.New("换完配置没能选上节点")
+		}
+	}
+	text := "内核已换成新配置，现有连接不断"
+	if before != "" && before != selected && !s.KeepConnections {
+		e.closeConnections() // 和切节点一样：用的节点变了，断开现有连接，浏览器马上走新节点
+		text = "内核已换成新配置，节点变了，已断开现有连接"
+	}
+	e.mu.Lock()
+	e.gen++ // 仪表盘据此重查出口 IP
+	e.mu.Unlock()
+	e.event("", fmt.Sprintf("%s：%d 个节点", text, len(s.Nodes)))
+	return nil
+}
+
+// reloadLine 认内核换配置时的回话：Servers ready 是换好了，Reload rejected 是新配置不要、旧的接着跑
+func (e *engine) reloadLine(line string) {
+	var result error
+	switch {
+	case line == "Servers ready":
+	case strings.HasPrefix(line, "Reload rejected"):
+		_, reason, _ := strings.Cut(line, ": ")
+		result = errors.New(reason)
+	default:
+		return
+	}
+	e.mu.Lock()
+	wait := e.reloading
+	e.reloading = nil
+	e.mu.Unlock()
+	if wait != nil {
+		wait <- result
+	}
+}
+
+// configFor 生成内核配置。数据目录里的 direct-domains.txt 每次都重新读
+func (e *engine) configFor(s Settings, rt runtimeConfig) ([]byte, error) {
+	directFile := filepath.Join(e.dir, "direct-domains.txt")
+	if domains, readErr := os.ReadFile(directFile); readErr == nil {
+		s.DirectDomains = append([]string(nil), s.DirectDomains...)
+		for _, line := range strings.Split(strings.TrimPrefix(string(domains), "\ufeff"), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				s.DirectDomains = append(s.DirectDomains, line)
+			}
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("读取直连规则文件失败: %w", readErr)
+	}
+	return generateConfig(s, rt)
 }
 
 // portFree 先试着占一下本地端口：内核自己报的是「以一种访问权限不允许的方式…」，看不出是谁占了
@@ -210,8 +321,9 @@ func freePort() (int, error) {
 
 // spawnKernel 写临时配置并启动内核。进程放进 job，GUI 不管怎么退出它都跟着结束。
 // 启动播报和配置错误走 stdout/stderr；日志写文件再跟读，因为内核写管道时会把中文系统错误变成问号。
-// 进程结束后调 flush，读完剩下的日志并删掉日志文件
-func spawnKernel(kernel, dir string, data []byte, out *kernelLog) (cmd *exec.Cmd, job kernelGroup, path string, flush func(), err error) {
+// 进程结束后调 flush，读完剩下的日志并删掉日志文件。watch 为 false 时内核不盯配置文件（--no-reload），
+// 要换配置只能发 SIGHUP；为 true 时它自己盯着，文件变了等 3 秒没再变就换
+func spawnKernel(kernel, dir string, data []byte, out *kernelLog, watch bool) (cmd *exec.Cmd, job kernelGroup, path string, flush func(), err error) {
 	file, err := os.CreateTemp(dir, "runtime-*.yaml")
 	if err != nil {
 		return nil, 0, "", nil, errors.New("无法创建临时配置")
@@ -229,7 +341,11 @@ func spawnKernel(kernel, dir string, data []byte, out *kernelLog) (cmd *exec.Cmd
 		os.Remove(path)
 		return nil, 0, "", nil, errors.New("无法创建内核进程")
 	}
-	cmd = exec.Command(kernel, "--no-reload", "-l", logPath, path)
+	args := []string{"-l", logPath, path}
+	if !watch {
+		args = append([]string{"--no-reload"}, args...)
+	}
+	cmd = exec.Command(kernel, args...)
 	configureKernel(cmd)
 	cmd.Env = append(os.Environ(), "RUST_LOG=warn")
 	cmd.Stdout, cmd.Stderr = out, out
@@ -329,18 +445,7 @@ func (e *engine) launch(s Settings) error {
 	secret := make([]byte, 24)
 	rand.Read(secret)
 	rt := runtimeConfig{APIPort: apiPort, Secret: hex.EncodeToString(secret), RulesDir: rules}
-	directFile := filepath.Join(e.dir, "direct-domains.txt")
-	if domains, readErr := os.ReadFile(directFile); readErr == nil {
-		for _, line := range strings.Split(strings.TrimPrefix(string(domains), "\ufeff"), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				s.DirectDomains = append(s.DirectDomains, line)
-			}
-		}
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return fmt.Errorf("读取直连规则文件失败: %w", readErr)
-	}
-	data, err := generateConfig(s, rt)
+	data, err := e.configFor(s, rt)
 	if err != nil {
 		return err
 	}
@@ -353,6 +458,7 @@ func (e *engine) launch(s Settings) error {
 			e.connEvent(reason)
 			return
 		}
+		e.reloadLine(line)
 		if !startupLine(line) {
 			e.mu.Lock()
 			e.tail = line // 退出时拿来当原因
@@ -360,14 +466,14 @@ func (e *engine) launch(s Settings) error {
 		}
 		e.event("", "内核  "+line)
 	}}
-	cmd, job, path, flush, err := spawnKernel(s.Kernel, e.dir, data, out)
+	cmd, job, path, flush, err := spawnKernel(s.Kernel, e.dir, data, out, watchConfig)
 	if err != nil {
 		return err
 	}
 	done := make(chan struct{})
 	e.cmd, e.done, e.job, e.config = cmd, done, job, path
 	e.mu.Lock()
-	e.api, e.port = rt, s.Port
+	e.api, e.port, e.kernel = rt, s.Port, s.Kernel
 	e.mu.Unlock()
 	go func() {
 		cmd.Wait()

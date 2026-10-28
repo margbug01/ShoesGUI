@@ -475,6 +475,14 @@ func newKernelGroup(dir string) (kernelGroup, error) {
 	return group, nil
 }
 func configureKernel(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
+
+// macOS 上内核不盯配置文件，改完配置发 SIGHUP 叫它马上换（--no-reload 时 SIGHUP 照样管用）
+const watchConfig = false
+
+// reloadWait 等内核换好配置的上限：准备新配置约 0.1 秒，换监听时端口被占最多重试 3 秒
+const reloadWait = 10 * time.Second
+
+func askReload(p *os.Process) error { return p.Signal(syscall.SIGHUP) }
 func (g kernelGroup) assign(pid int) error {
 	value, ok := groups.Load(g)
 	if !ok {

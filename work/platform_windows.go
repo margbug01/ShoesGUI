@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -51,6 +52,16 @@ func newKernelGroup(dir string) (kernelGroup, error) { h, err := newJob(); retur
 func configureKernel(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 }
+
+// Windows 没有 SIGHUP，内核在 Windows 上也不接别的重载信号：让它自己盯着配置文件，
+// 文件变了等 3 秒没再变就换，所以不用通知
+const watchConfig = true
+
+// reloadWait 等内核换好配置的上限，比 macOS 多出来的是它那 3 秒防抖
+const reloadWait = 15 * time.Second
+
+func askReload(*os.Process) error { return nil }
+
 func (g kernelGroup) assign(pid int) error { return assignJob(windows.Handle(g), pid) }
 func (g kernelGroup) kill()                { windows.TerminateJobObject(windows.Handle(g), 1) }
 func (g kernelGroup) close()               { windows.CloseHandle(windows.Handle(g)) }

@@ -156,7 +156,7 @@ func realPings(kernel, dir string, nodes []Node, report func(i, ms int)) error {
 			mu.Unlock()
 		}
 	}}
-	cmd, job, path, flush, err := spawnKernel(kernel, dir, pingConfig(nodes, ports), out)
+	cmd, job, path, flush, err := spawnKernel(kernel, dir, pingConfig(nodes, ports), out, false)
 	if err != nil {
 		return err
 	}

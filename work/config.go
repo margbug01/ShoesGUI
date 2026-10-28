@@ -91,6 +91,17 @@ func modeTargets(mode string) (domestic, other string) {
 	return groupDirect, groupSelect
 }
 
+// selectedName 是「节点选择」组该选的成员：设置里选的那个，没选就第一个。names 是 kernelNames(s.Nodes)
+func selectedName(s Settings, names []string) string {
+	if s.Selected >= 0 && s.Selected < len(names) {
+		return names[s.Selected]
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
+
 // kernelNames 给每个节点一个内核里唯一、合法的名字（非空、≤256 字节、无控制字符、不占保留名）
 func kernelNames(nodes []Node) []string {
 	used := map[string]bool{}
@@ -359,10 +370,7 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 		member["name"] = names[i]
 		members[i] = member
 	}
-	selected := names[0]
-	if s.Selected >= 0 && s.Selected < len(names) {
-		selected = names[s.Selected]
-	}
+	selected := selectedName(s, names)
 	domestic, other := modeTargets(s.Mode)
 	route := func(masks any, chain string, noResolve bool) map[string]any {
 		rule := map[string]any{"masks": masks, "action": "allow", "client_chain": chain}

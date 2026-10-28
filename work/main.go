@@ -125,7 +125,7 @@ func (a *application) save(next Settings) bool {
 	return true
 }
 
-// commit 保存节点、端口或内核这类要重写配置的改动，内核在后台重启（约 1 秒，系统代理保持）
+// commit 保存节点、端口或内核这类要重写配置的改动。内核在后台换配置：节点变了就地换，连接不断；改了端口或内核才重启（系统代理保持）
 func (a *application) commit(next Settings) bool {
 	if !a.save(next) {
 		return false

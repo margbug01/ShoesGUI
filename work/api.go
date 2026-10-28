@@ -94,9 +94,24 @@ func (e *engine) call(method, path string, body, out any) error {
 	return json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(out)
 }
 
-// choose 切换选择组。只影响新连接，现有连接要不要断由调用的人决定（closeConnections）
+// choose 切换选择组。只影响新连接，现有连接要不要断由调用的人决定（closeConnections）。
+// 内核正在换配置的话等它换完再切，不然换完按旧设置重选一遍会把这次切换盖掉
 func (e *engine) choose(group, name string) error {
+	e.op.Lock()
+	defer e.op.Unlock()
+	return e.pick(group, name)
+}
+
+// pick 是不等锁的 choose，给已经拿着 op 的 reconfigure 用
+func (e *engine) pick(group, name string) error {
 	return e.call(http.MethodPut, "/proxies/"+url.PathEscape(group), map[string]string{"name": name}, nil)
+}
+
+// current 选择组现在选的是哪个
+func (e *engine) current(group string) (string, error) {
+	var proxy struct{ Now string }
+	err := e.call(http.MethodGet, "/proxies/"+url.PathEscape(group), nil, &proxy)
+	return proxy.Now, err
 }
 
 // closeConnections 断开所有现有连接，浏览器会马上按新的选择重连。下载、通话也会断
