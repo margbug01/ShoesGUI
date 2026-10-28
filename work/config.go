@@ -375,15 +375,15 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 	for _, entry := range s.DirectDomains {
 		domain := strings.ToLower(strings.TrimSpace(entry))
 		if len(domain) == 0 || len(domain) > 253 || net.ParseIP(domain) != nil {
-			return nil, errors.New("直连域名无效")
+			return nil, fmt.Errorf("直连域名「%s」无效：只写域名，比如 example.com，不带协议、端口、路径或 *.", entry)
 		}
 		for _, label := range strings.Split(domain, ".") {
 			if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-				return nil, errors.New("直连域名无效")
+				return nil, fmt.Errorf("直连域名「%s」无效：只写域名，比如 example.com，不带协议、端口、路径或 *.", entry)
 			}
 			for _, char := range label {
 				if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
-					return nil, errors.New("直连域名无效")
+					return nil, fmt.Errorf("直连域名「%s」无效：只写域名，比如 example.com，不带协议、端口、路径或 *.", entry)
 				}
 			}
 		}

@@ -169,3 +169,16 @@ func TestFlowsShowWhichWayEachDomainWent(t *testing.T) {
 		t.Fatal("⌘F on the log page should search it, not jump to the proxies")
 	}
 }
+
+// direct-domains.txt 里的域名，内核报成 "example.com"，连接记录里写「自定义直连」
+func TestFlowRuleForCustomDirect(t *testing.T) {
+	if got := ruleLabel(`mixed-in (root): "ticket.example.com"`); got != "自定义直连" {
+		t.Fatalf("got %q", got)
+	}
+	if got := ruleLabel(`mixed-in (root): "0.0.0.0/0"`); got != "其余" {
+		t.Fatalf("catch-all became %q", got)
+	}
+	if got := ruleLabel(`mixed-in (root): "10.0.0.0/8"`); got != "" {
+		t.Fatalf("a CIDR became %q", got)
+	}
+}

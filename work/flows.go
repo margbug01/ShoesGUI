@@ -76,7 +76,7 @@ func flowRoute(chains []string) (direct bool, via string) {
 	return false, chains[0]
 }
 
-// ruleLabel 把内核报的规则（rulePayload）翻成人话，对应 generateConfig 里的四条
+// ruleLabel 把内核报的规则（rulePayload）翻成人话，对应 generateConfig 里的几条
 func ruleLabel(payload string) string {
 	switch {
 	case strings.Contains(payload, "geosite-cn"):
@@ -87,6 +87,10 @@ func ruleLabel(payload string) string {
 		return "局域网"
 	case strings.Contains(payload, `"0.0.0.0/0"`):
 		return "其余"
+	}
+	// direct-domains.txt 里的一行，内核原样报成 "example.com"
+	if i := strings.LastIndex(payload, `: "`); i >= 0 && strings.HasSuffix(payload, `"`) && !strings.Contains(payload[i:], "/") {
+		return "自定义直连"
 	}
 	return ""
 }

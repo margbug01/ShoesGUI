@@ -93,6 +93,10 @@ func TestDirectDomains(t *testing.T) {
 			t.Fatalf("accepted invalid direct domain %q", domain)
 		}
 	}
+	// 写错了要说是哪一个，不然几十行里找不到
+	if _, err := generateConfig(Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", DirectDomains: []string{"ok.example.com", "https://bad.example.com"}}, testRuntime); err == nil || !strings.Contains(err.Error(), "https://bad.example.com") {
+		t.Fatalf("error does not name the bad domain: %v", err)
+	}
 }
 
 func TestKernelNames(t *testing.T) {
