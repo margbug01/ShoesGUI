@@ -3,10 +3,12 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -33,33 +35,13 @@ var boltIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stro
 
 var addIcon = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`))
 
-func iconButton(c *ui.Context, icon *ui.SVG, label string, primary, disabled bool) ui.Element {
-	theme := c.Theme()
-	background, foreground := theme.Surface, theme.Text
-	if primary {
-		background, foreground = theme.Accent, theme.AccentText
-	}
-	button := ui.ButtonBase(c).Size(36, 36).Center().Radius(9).Background(background).Border(1, theme.Border).Label(label).Tooltip(label).Disabled(disabled).Cursor(ui.CursorPointer)
-	if button.Hovered() && !disabled {
-		if primary {
-			button.Background(theme.AccentHover)
-		} else {
-			button.Background(theme.SurfaceHover)
-		}
-	}
-	if disabled {
-		foreground = theme.TextMuted
-		button.Background(theme.SurfacePressed)
-	}
-	return button.Children(func() { ui.Icon(c, icon).Size(18, 18).TextColor(foreground) })
-}
-
+// group / settingRow 编辑节点、粘贴导入还在用的分组，代理页换成新样式时再一起改掉
 func group(c *ui.Context, title string, body func()) {
 	t := c.Theme()
 	if title != "" {
-		ui.Text(c, title).FontSize(12).TextColor(t.TextMuted).Padding(18, 4, 8, 4)
+		ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Padding(16, 4, 6, 4)
 	}
-	ui.Column(c).FillWidth().Padding(4, 16).Radius(12).Background(paneColor(t)).Border(1, paneBorder(t)).Shadow(0, 1, 2, 0, ui.RGBA(10, 20, 35, 0.03)).Children(body)
+	ui.Column(c).FillWidth().Padding(4, 16).Radius(12).Background(paneColor(t)).Border(1, paneBorder(t)).Children(body)
 }
 
 // choice 给分段按钮、开关、下拉框、输入框绑一个跨帧的变量。MyGo 在一帧建完之后才把点击和输入写回
@@ -79,7 +61,7 @@ func (ch *choice[T]) bind(current T) (p *T, picked T, changed bool) {
 func settingRow(c *ui.Context, title, description string, control func()) {
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(12, 0).Gap(16).Children(func() {
 		ui.Column(c).Grow(1).Gap(3).Children(func() {
-			ui.Text(c, title).FontSize(14)
+			ui.Text(c, title).FontSize(13.5).FontWeight(500)
 			if description != "" {
 				ui.Text(c, description).FontSize(12).TextColor(c.Theme().TextMuted)
 			}
@@ -88,22 +70,29 @@ func settingRow(c *ui.Context, title, description string, control func()) {
 	})
 }
 
-func (a *application) titleBar(c *ui.Context) {
-	ui.Row(c).FillWidth().Height(36).Shrink(0).AlignItems(ui.Center).Children(func() {
-		ui.Row(c).Grow(1).Height(36).DragWindow()
-		for _, b := range []struct {
-			label string
-			run   func()
-		}{{"–", a.window.Minimize}, {"✕", a.window.Close}} {
-			button := ui.ButtonBase(c.Key(b.label)).Size(46, 36).Center().Cursor(ui.CursorPointer)
-			if button.Hovered() {
-				button.Background(c.Theme().SurfaceHover)
-			}
-			if button.Children(func() { ui.Text(c, b.label).FontSize(13) }).Clicked() {
-				b.run()
-			}
-		}
-	})
+const (
+	sidebarWidth = 212
+	pagePad      = 32
+	// winBarHeight Windows / Linux 上那条标题栏的高度：隐藏了系统标题栏，系统的最小化、关闭按钮占满它
+	winBarHeight = 40
+)
+
+var tabs = []string{"仪表盘", "代理", "设置", "日志"}
+
+// sidebarVibrancy 侧栏底下的毛玻璃，只有 macOS 用。Windows 的毛玻璃深色主题下还是浅的，侧栏的字会看不清，就自己铺色
+func sidebarVibrancy() mygo.Vibrancy {
+	if runtime.GOOS == "darwin" {
+		return mygo.VibrancySidebar
+	}
+	return mygo.VibrancyNone
+}
+
+// topBar 窗口顶上那一条的高度，内容从它下面开始：macOS 是红绿灯那一条，别的系统是窗口按钮那一条
+func topBar(c *ui.Context) float32 {
+	if runtime.GOOS != "darwin" {
+		return winBarHeight
+	}
+	return max(c.TitleBar().Height, 40)
 }
 
 func (a *application) view(c *ui.Context) {
@@ -116,8 +105,12 @@ func (a *application) view(c *ui.Context) {
 	}
 	theme := *c.Theme()
 	theme.Font = "MiSans, system-ui"
-	mamiColors(&theme)
+	p := paletteFor(theme.Dark)
+	applyPalette(&theme, p)
 	c.SetTheme(&theme)
+	if c.Vibrancy() {
+		c.Root().Background(ui.Transparent) // 侧栏底下透出毛玻璃，内容区自己铺底
+	}
 	status, logs, ready, proxy := a.engine.snapshot()
 	busy := a.busy.Load()
 	a.dashOn.Store(a.tab == "仪表盘")
@@ -128,80 +121,18 @@ func (a *application) view(c *ui.Context) {
 		}
 		a.shownTab, a.errorText = a.tab, "" // 报错只跟着出错的那一页
 	}
-	ui.Row(c).Fill().AlignItems(ui.Stretch).Draw(func(p *ui.Painter, r ui.Rect) { windowTexture(theme.Dark).draw(p, r, 0) }).Children(func() {
-		c.SetTheme(sidebarTheme(&theme))
-		ui.Column(c).Width(184).FillHeight().Draw(func(p *ui.Painter, r ui.Rect) {
-			p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y, W: 1, H: r.H}, paneBorder(&theme), 0)
-		}).Children(func() {
-			ui.Row(c).Padding(22, 20, 20, 20).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Image(c, logo).Size(28, 28)
-				ui.Text(c, "Shoes").FontSize(15).FontWeight(600)
-			}).DragWindow()
-			ui.Sidebar(c, &a.tab, func() {
-				for i, label := range []string{"仪表盘", "代理", "设置", "日志"} {
-					item := ui.SidebarItem(c, label, navIcons[i], label).Transition(ui.ElementTransition{Duration: 120 * time.Millisecond, Colors: true})
-					if a.tab == label {
-						item.Background(c.Theme().SurfacePressed).Shadow(0, 1, 3, 0, ui.RGBA(10, 20, 35, 0.07)).FontWeight(600)
-					}
-				}
-			}).Grow(1)
-			a.updateBadge(c)
-			ui.Text(c, sidebarVersion()).FontSize(11).TextColor(theme.TextMuted).Padding(18, 20)
-		})
-		c.SetTheme(&theme)
-		ui.Column(c).Grow(1).FillHeight().Children(func() {
-			a.titleBar(c)
-			ui.Scroll(c).FillWidth().Grow(1).Children(func() {
-				ui.Column(c.Key(a.tab)).FillWidth().Padding(0, 28, 20, 28).Gap(8).Children(func() {
-					title := a.tab
-					if a.tab == "代理" && a.share != nil {
-						title = "分享与导出"
-					} else if a.tab == "代理" && a.importing {
-						title = "粘贴导入"
-					} else if a.tab == "代理" && a.editing {
-						title = "编辑节点"
-						if a.editIndex < 0 {
-							title = "添加节点"
-						}
-					}
-					ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(0, 0, 8, 0).Children(func() {
-						ui.Text(c, title).FontSize(21).FontWeight(600).Grow(1)
-						if a.tab == "仪表盘" {
-							a.dashboardHeader(c, status, ready, proxy, busy)
-						}
-						if a.tab == "日志" {
-							p, v, changed := a.logPick.bind(a.logFilter)
-							ui.Segmented(c.Key("log-filter"), p, "全部", "只看重要").Label("日志筛选")
-							if changed {
-								a.logFilter = v
-							}
-						}
-						if a.tab == "代理" && !a.editing && !a.importing && a.share == nil {
-							visible := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
-							label := fmt.Sprintf("测速：%s %d 个", a.nodeGroup, len(visible))
-							if a.testing {
-								label = "测速中…"
-							}
-							// 点一下就测最常用的真连接延迟，TCPing 放右键
-							test := iconButton(c.Key("test-nodes"), boltIcon, label, false, a.testing || len(visible) == 0).Tooltip(label + "（右键可选 TCPing）").ContextMenu(func(m *ui.Menu) {
-								if m.Item(fmt.Sprintf("真连接延迟（%d 个）", len(visible))).Disabled(a.testing).Chosen() {
-									a.testNodes(visible, false)
-								}
-								if m.Item(fmt.Sprintf("TCPing（%d 个）", len(visible))).Disabled(a.testing).Chosen() {
-									a.testNodes(visible, true)
-								}
-							})
-							if test.Clicked() {
-								a.testNodes(visible, false)
-							}
-							if iconButton(c.Key("import-nodes"), pasteIcon, "粘贴导入", false, false).Clicked() {
-								a.openImport()
-							}
-							if iconButton(c.Key("add-node"), addIcon, "添加节点", false, false).Clicked() {
-								a.beginEdit(-1)
-							}
-						}
-					})
+	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
+		side := ui.Column(c).Width(sidebarWidth).Shrink(0).FillHeight()
+		if !c.Vibrancy() {
+			side.Background(p.sidebar)
+		}
+		side.Children(func() { a.sidebar(c, status, ready, proxy, busy) })
+		ui.Column(c.Key("main")).Grow(1).MinWidth(0).FillHeight().Background(p.bg).BorderWidth(0, 0, 0, 1).BorderColor(p.hairline).Children(func() {
+			top := topBar(c)
+			ui.Scroll(c.Key("page-"+a.tab)).FillWidth().Grow(1).Padding(top+4, pagePad, 32, pagePad).ScrollbarInsets(top, 0, 0, 0).Children(func() {
+				a.startMark(c, top)
+				ui.Column(c.Key(a.tab)).FillWidth().Gap(8).Children(func() {
+					a.pageHeader(c, status, ready, proxy, busy)
 					switch a.tab {
 					case "仪表盘":
 						a.dashboardView(c, ready, proxy, busy)
@@ -215,34 +146,205 @@ func (a *application) view(c *ui.Context) {
 				})
 			})
 			a.statusBar(c)
+			// 顶上那一条压在页面上面：拖得动窗口，内容滚到它底下时出一道磨砂边
+			a.pageTop(c, top)
 		})
+	})
+	// 成功一类的提示用 Toast，几秒后自己消失；报错留在页面底下，见 statusBar
+	if a.noticeSeq != a.toasted {
+		a.toasted = a.noticeSeq
+		if a.notice != "" {
+			c.AddToast(ui.Toast{ID: "notice", Title: a.notice})
+		}
+	}
+}
+
+// pageHeader 页面的大标题，右边放这一页的操作
+func (a *application) pageHeader(c *ui.Context, status string, ready, proxy, busy bool) {
+	title := a.tab
+	if a.tab == "代理" && a.share != nil {
+		title = "分享与导出"
+	} else if a.tab == "代理" && a.importing {
+		title = "粘贴导入"
+	} else if a.tab == "代理" && a.editing {
+		title = "编辑节点"
+		if a.editIndex < 0 {
+			title = "添加节点"
+		}
+	}
+	ui.Row(c).FillWidth().MinHeight(36).AlignItems(ui.Center).Gap(6).Padding(0, 0, 10, 0).Children(func() {
+		heading(c, title).Grow(1).MinWidth(0)
+		switch {
+		case a.tab == "仪表盘":
+			a.dashboardHeader(c, status, ready, proxy, busy)
+		case a.tab == "日志":
+			p, v, changed := a.logPick.bind(a.logFilter)
+			segmented(c.Key("log-filter"), p, "全部", "只看重要")
+			if changed {
+				a.logFilter = v
+			}
+		case a.tab == "代理" && !a.editing && !a.importing && a.share == nil:
+			visible := visibleNodes(a.settings.Nodes, a.nodeGroup, a.nodeSearch)
+			label := fmt.Sprintf("测速：%s %d 个", a.nodeGroup, len(visible))
+			if a.testing {
+				label = "测速中…"
+			}
+			// 点一下就测最常用的真连接延迟，TCPing 放右键
+			test := iconButton(c.Key("test-nodes"), boltIcon, label, a.testing || len(visible) == 0).Tooltip(label + "（右键可选 TCPing）").ContextMenu(func(m *ui.Menu) {
+				if m.Item(fmt.Sprintf("真连接延迟（%d 个）", len(visible))).Disabled(a.testing).Chosen() {
+					a.testNodes(visible, false)
+				}
+				if m.Item(fmt.Sprintf("TCPing（%d 个）", len(visible))).Disabled(a.testing).Chosen() {
+					a.testNodes(visible, true)
+				}
+			})
+			if test.Clicked() {
+				a.testNodes(visible, false)
+			}
+			if iconButton(c.Key("import-nodes"), pasteIcon, "粘贴导入", false).Clicked() {
+				a.openImport()
+			}
+			if iconButton(c.Key("add-node"), addIcon, "添加节点", false).Clicked() {
+				a.beginEdit(-1)
+			}
+		}
 	})
 }
 
-// statusBar 窗口底部一行，在滚动区外面，列表滚到哪都看得见：报错红字、普通提示灰字，都能关
+// sidebar 左边一栏：页面导航，底下是新版本提示和连接状态。没被按钮接住的地方拖得动窗口，和它顶到的标题栏一样
+func (a *application) sidebar(c *ui.Context, status string, ready, proxy, busy bool) {
+	ui.Column(c).Fill().Padding(0, 12, 12, 12).Gap(2).DragWindow().Children(func() {
+		if c.TitleBar().Left > 0 {
+			ui.Box(c).Height(topBar(c) + 4).Shrink(0) // 让开红绿灯
+		} else {
+			// 没有红绿灯的地方（Windows）左上角空着，放应用的名字
+			ui.Row(c).Padding(14, 8, 14, 8).Gap(9).AlignItems(ui.Center).Shrink(0).Children(func() {
+				ui.Image(c, logo).Size(22, 22)
+				ui.Text(c, "Shoes").FontSize(14).FontWeight(600)
+			})
+		}
+		for i, label := range tabs {
+			a.navItem(c, navIcons[i], label)
+		}
+		ui.Spacer(c)
+		a.updateBadge(c)
+		a.statusCard(c, status, ready, proxy, busy)
+	})
+}
+
+func (a *application) navItem(c *ui.Context, icon *ui.SVG, label string) {
+	p := pal(c)
+	selected := a.tab == label
+	b := ui.ButtonBase(c.Key("nav-" + label)).FillWidth().Height(32).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label(label).FocusRing(false)
+	bg := ui.Transparent
+	switch {
+	case selected:
+		bg = p.press
+	case b.Hovered():
+		bg = p.hover
+	}
+	b.Background(b.AnimateColor("bg", bg, hoverFade))
+	color := p.text
+	if selected {
+		color = p.accent
+	}
+	b.Children(func() {
+		ui.Icon(c, icon).Size(17, 17).TextColor(color)
+		ui.Text(c, label).FontSize(13.5).FontWeight(500).TextColor(p.text)
+	})
+	if b.Clicked() {
+		a.tab = label
+	}
+}
+
+// statusCard 侧栏底部的连接状态，哪一页都看得到；点了去仪表盘
+func (a *application) statusCard(c *ui.Context, status string, ready, proxy, busy bool) {
+	p := pal(c)
+	node, hasNode := a.selectedNode()
+	title, sub, dot := status, "", p.faint
+	if hasNode {
+		sub = node.Name
+	}
+	switch {
+	case busy:
+		title = "处理中…"
+	case proxy:
+		title, dot = "已连接", p.good
+		if hasNode {
+			sub = node.Name + " · " + modes[modeIndex(a.settings.Mode)].label
+		}
+	case !hasNode:
+		title, sub = "还没有节点", "点这里导入"
+	case status == "启动失败" || status == "内核已退出":
+		dot = p.bad
+	case ready:
+		title = "未连接"
+	}
+	card := ui.ButtonBase(c.Key("status-card")).FillWidth().Gap(10).Padding(9, 12).Radius(12).AlignItems(ui.Center).Label("连接状态：" + title).FocusRing(false).Cursor(ui.CursorPointer)
+	bg := p.hover
+	if card.Hovered() {
+		bg = p.press
+	}
+	card.Background(card.AnimateColor("bg", bg, hoverFade))
+	card.Children(func() {
+		light := ui.Box(c).Size(8, 8).Radius(4).Background(dot).Shrink(0)
+		if proxy {
+			light.Shadow(0, 0, 0, 3, dot.Alpha(0.22))
+		}
+		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, title).FontSize(12.5).FontWeight(600).SingleLine()
+			if sub != "" {
+				ui.Text(c, sub).FontSize(11.5).TextColor(p.muted).SingleLine()
+			}
+		})
+	})
+	if card.Clicked() {
+		a.tab = "仪表盘"
+	}
+}
+
+// startMark 放在页面内容的最前面：它往上走过顶上那一条，内容就在那一条底下了
+func (a *application) startMark(c *ui.Context, top float32) {
+	b := ui.Box(c.Key("start-mark")).Height(0).Bounds()
+	if b.W > 0 {
+		a.underTop = b.Y < top-0.5
+	}
+}
+
+// pageTop 页面顶上那一条：拖得动窗口；内容滚到底下时像 macOS 26 的硬滚动边那样磨砂，平时看不见
+func (a *application) pageTop(c *ui.Context, top float32) {
+	edge := ui.Box(c.Key("top-edge")).Absolute().Top(0).Left(0).Right(0).Height(top).DragWindow().Material(glass.ScrollEdge{Hard: true, Background: pal(c).bg})
+	target := float32(0)
+	if a.underTop {
+		target = 1
+	}
+	edge.Opacity(edge.AnimateTo("shown", target, ui.Animation{Duration: 180 * time.Millisecond}))
+}
+
+// statusBar 窗口底部一行，在滚动区外面，列表滚到哪都看得见。只放报错，成功一类的提示走 Toast
 func (a *application) statusBar(c *ui.Context) {
-	text, color, closable := a.errorText, c.Theme().Danger, true
+	text, closable := a.errorText, true
 	if text == "" && !a.storageOK {
 		text, closable = "无法读取本地设置，改动不会保存", false
 	}
 	if text == "" {
-		text, color = a.notice, c.Theme().TextMuted
-	}
-	if text == "" {
 		return
 	}
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(6, 22, 12, 28).Children(func() {
-		ui.Text(c, text).FontSize(12).TextColor(color).Grow(1)
-		if !closable {
-			return
-		}
-		button := ui.ButtonBase(c.Key("dismiss-status")).Size(24, 24).Center().Radius(6).Label("关闭提示").Tooltip("关闭提示").Cursor(ui.CursorPointer)
-		if button.Hovered() {
-			button.Background(c.Theme().SurfaceHover)
-		}
-		if button.Children(func() { ui.Text(c, "✕").FontSize(11).TextColor(c.Theme().TextMuted) }).Clicked() {
-			a.errorText, a.notice = "", ""
-		}
+	p := pal(c)
+	ui.Row(c).FillWidth().Padding(0, pagePad, 14, pagePad).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Padding(8, 8, 8, 12).Radius(9).Background(p.bad.Alpha(0.1)).Children(func() {
+			ui.Text(c, text).FontSize(12.5).TextColor(p.bad).Grow(1)
+			if !closable {
+				return
+			}
+			button := ui.ButtonBase(c.Key("dismiss-status")).Size(22, 22).Center().Radius(6).Label("关闭提示").Tooltip("关闭提示").Cursor(ui.CursorPointer)
+			if button.Hovered() {
+				button.Background(p.bad.Alpha(0.12))
+			}
+			if button.Children(func() { ui.Text(c, "✕").FontSize(11).TextColor(p.bad) }).Clicked() {
+				a.errorText = ""
+			}
+		})
 	})
 }
 
@@ -261,9 +363,17 @@ func themeSource(key string) mygo.ThemeSource {
 	return mygo.ThemeSystem
 }
 
+// closeHint 关窗口不等于退出，在设置里说一声怎么退出
+func closeHint() string {
+	if runtime.GOOS == "darwin" {
+		return "关掉窗口后 Shoes 还在菜单栏里运行，代理照常工作。要退出按 ⌘Q，或点菜单栏图标里的「退出」。"
+	}
+	return "关掉窗口后 Shoes 还在托盘里运行，代理照常工作。要退出，从托盘图标的右键菜单里点「退出」。"
+}
+
 func (a *application) settingsView(c *ui.Context) {
-	group(c, "常规", func() {
-		settingRow(c, "主题", "", func() {
+	section(c, "通用", func() {
+		row(c, "外观", "", func() {
 			index := 0
 			for i, t := range themes {
 				if t.key == a.settings.Theme {
@@ -271,7 +381,7 @@ func (a *application) settingsView(c *ui.Context) {
 				}
 			}
 			p, chosen, changed := a.themePick.bind(index)
-			ui.Segmented(c.Key("theme"), p, themes[0].label, themes[1].label, themes[2].label).Label("主题")
+			segmented(c.Key("theme"), p, themes[0].label, themes[1].label, themes[2].label)
 			if changed {
 				next := a.settings
 				next.Theme = themes[chosen].key
@@ -280,9 +390,9 @@ func (a *application) settingsView(c *ui.Context) {
 				}
 			}
 		})
-		settingRow(c, "开机时启动 Shoes", "登录系统后待在托盘；接不接管代理看下一项", func() {
+		row(c, "开机时启动 Shoes", "登录系统后在后台待命；接不接管代理看下一项", func() {
 			p, on, changed := a.loginPick.bind(a.openAtLogin)
-			ui.Switch(c.Key("open-at-login"), p)
+			ui.Switch(c.Key("open-at-login"), p).Label("开机时启动 Shoes")
 			if changed {
 				if err := mygo.App.SetOpenAtLogin(on); err != nil {
 					a.errorText = "无法设置开机启动"
@@ -291,9 +401,9 @@ func (a *application) settingsView(c *ui.Context) {
 				}
 			}
 		})
-		settingRow(c, "打开时自动接管系统代理", "包括开机启动的时候，打开就能直接用", func() {
+		row(c, "打开时自动接管系统代理", "包括开机启动的时候，打开就能直接用", func() {
 			p, on, changed := a.autoPick.bind(a.settings.AutoConnect)
-			ui.Switch(c.Key("auto-connect"), p)
+			ui.Switch(c.Key("auto-connect"), p).Label("打开时自动接管系统代理")
 			if changed {
 				next := a.settings
 				next.AutoConnect = on
@@ -301,19 +411,17 @@ func (a *application) settingsView(c *ui.Context) {
 			}
 		})
 	})
-	group(c, "连接", func() {
-		settingRow(c, "本地端口", "HTTP / SOCKS5 共用，回车或点别处就保存，内核会重启", func() {
-			input := ui.TextInput(c.Key("port"), &a.portDraft).Width(130).Label("本地端口")
+	sectionNote(c, closeHint())
+	section(c, "连接", func() {
+		rowWith(c, "本地端口", "HTTP / SOCKS5 共用，回车或点别处就保存，内核会重启", a.portError, nil, func() {
+			input := ui.TextInput(c.Key("port"), &a.portDraft).Width(110).Label("本地端口")
 			if leftOrSubmitted(input, &a.portFocus) {
 				a.savePort()
 			}
 		})
-		if a.portError != "" {
-			ui.Text(c, a.portError).FontSize(12).TextColor(c.Theme().Danger).Padding(0, 0, 10, 0)
-		}
-		settingRow(c, "切换节点时断开现有连接", "断开后网页马上走新节点；关掉的话下载、通话不会被打断，新连接才走新节点", func() {
+		row(c, "切换节点时断开现有连接", "断开后网页马上走新节点；关掉的话下载、通话不会被打断，新连接才走新节点", func() {
 			p, on, changed := a.closePick.bind(!a.settings.KeepConnections)
-			ui.Switch(c.Key("close-connections"), p)
+			ui.Switch(c.Key("close-connections"), p).Label("切换节点时断开现有连接")
 			if changed {
 				next := a.settings
 				next.KeepConnections = !on
@@ -321,34 +429,29 @@ func (a *application) settingsView(c *ui.Context) {
 			}
 		})
 	})
-	a.updateSettings(c)
-	group(c, "高级", func() {
-		ui.Column(c).FillWidth().Padding(12, 0).Gap(10).Children(func() {
-			ui.Column(c).Gap(3).Children(func() {
-				ui.Text(c, "Shoes 内核路径").FontSize(14)
-				ui.Text(c, kernelHint).FontSize(12).TextColor(c.Theme().TextMuted)
-			})
-			ui.Row(c).FillWidth().Gap(8).Children(func() {
-				input := ui.TextInput(c.Key("kernel-path"), &a.kernelDraft).Grow(1).Placeholder(kernelName).Label("Shoes 内核路径")
-				if leftOrSubmitted(input, &a.kernelFocus) {
+	section(c, "高级", func() {
+		path := a.kernelDraft
+		if path == "" {
+			path = "还没找到 " + kernelName
+		}
+		rowWith(c, "Shoes 内核", path, a.kernelError, nil, func() {
+			if ui.Button(c.Key("browse"), "更改…").Tooltip(kernelHint).Clicked() {
+				paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.window, Title: "选择 " + kernelName, Filters: []mygo.FileFilter{{Name: "可执行文件", Extensions: kernelExtensions}}})
+				if err != nil {
+					a.errorText = "无法打开文件"
+				} else if len(paths) > 0 {
+					a.kernelDraft = paths[0]
 					a.saveKernel()
 				}
-				if ui.Button(c.Key("browse"), "选择").Clicked() {
-					paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.window, Title: "选择 " + kernelName, Filters: []mygo.FileFilter{{Name: "可执行文件", Extensions: kernelExtensions}}})
-					if err != nil {
-						a.errorText = "无法打开文件"
-					} else if len(paths) > 0 {
-						a.kernelDraft = paths[0]
-						a.saveKernel()
-					}
-				}
-			})
-			if a.kernelError != "" {
-				ui.Text(c, a.kernelError).FontSize(12).TextColor(c.Theme().Danger)
 			}
 		})
 	})
-	ui.Text(c, "关闭窗口会缩到托盘，从托盘右键菜单退出。").FontSize(12).TextColor(c.Theme().TextMuted).Padding(16, 4)
+	section(c, "关于", func() {
+		a.updateRows(c)
+		row(c, "GitHub", "源代码、更新说明和各平台的下载", func() {
+			ui.Link(c, "打开", repoPage)
+		})
+	})
 }
 
 // leftOrSubmitted 回车或焦点离开输入框时为 true。was 是上一帧有没有焦点，要跨帧存着

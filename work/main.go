@@ -30,6 +30,9 @@ type application struct {
 	share          *shareState
 	notice         string
 	noticeUntil    time.Time
+	noticeSeq      int  // showNotice 一次加一，界面据此弹 Toast
+	toasted        int  // 已经弹过 Toast 的 noticeSeq
+	underTop       bool // 页面内容滚到了顶上那一条底下，那一条就显出磨砂边
 	addingGroup    bool
 	renaming       string // 正在改名的分组
 	groupDelete    string // 正在确认删除的分组
@@ -62,8 +65,7 @@ type application struct {
 	portDraft      string
 	kernelError    string
 	portError      string
-	kernelFocus    bool // 上一帧输入框有没有焦点，失焦就保存
-	portFocus      bool
+	portFocus      bool           // 上一帧端口输入框有没有焦点，失焦就保存
 	delays         map[string]int // delayKeys（节点配置）→ 毫秒；0 测速中，-1 超时
 	testing        bool
 	quitting       bool
@@ -471,7 +473,18 @@ func main() {
 	mygo.App.OnSecondInstance(func([]string, string) { a.showWindow() })
 	mygo.App.WhenReady(func() {
 		a.openAtLogin = mygo.App.OpenAtLogin()
-		a.window = mygo.NewWindow(mygo.WindowOptions{Title: "Shoes", Width: 820, Height: 620, MinWidth: 600, MinHeight: 480, Frameless: true, DisableMaximize: true, StateKey: "main", Hidden: mygo.App.WasOpenedAtLogin(), Content: ui.View(a.view)})
+		a.window = mygo.NewWindow(mygo.WindowOptions{
+			Title: "Shoes", Width: 880, Height: 640, MinWidth: 680, MinHeight: 500, DisableMaximize: true, StateKey: "main",
+			Hidden: mygo.App.WasOpenedAtLogin(),
+			// 隐藏系统标题栏，页面一直铺到窗口顶上：macOS 的红绿灯挪进侧栏左上角，
+			// Windows 的最小化、关闭还是系统自己的，占满顶上 winBarHeight 那一条
+			TitleBarStyle:        mygo.TitleBarHidden,
+			TitleBarHeight:       winBarHeight,
+			TrafficLightPosition: &mygo.Point{X: 18, Y: 18},
+			Vibrancy:             sidebarVibrancy(),
+			BackgroundColor:      "light-dark(#ffffff, #141416)",
+			Content:              ui.View(a.view),
+		})
 		a.createTray()
 		a.window.OnHide(func() { a.dashOn.Store(false) })
 		go a.watchTraffic()

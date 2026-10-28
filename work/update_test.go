@@ -93,9 +93,3 @@ func TestNoteLines(t *testing.T) {
 		t.Fatalf("truncated: got %q", got)
 	}
 }
-
-func TestSidebarVersionInTests(t *testing.T) {
-	if got := sidebarVersion(); got != "Shoes" { // go test 不是 mygo build，没有版本号
-		t.Fatalf("got %q", got)
-	}
-}

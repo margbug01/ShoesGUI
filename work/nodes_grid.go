@@ -346,7 +346,7 @@ func (a *application) nodeGrid(c *ui.Context) {
 			sortIndex = 1
 		}
 		p, picked, changed := a.sortPick.bind(sortIndex)
-		ui.Segmented(c.Key("sort"), p, "默认顺序", "按延迟").Label("排序")
+		segmented(c.Key("sort"), p, "默认顺序", "按延迟")
 		if changed {
 			a.sortByDelay = picked == 1
 		}

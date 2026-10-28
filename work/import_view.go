@@ -110,6 +110,7 @@ func (a *application) transportFields(c *ui.Context) {
 
 func (a *application) showNotice(text string) {
 	a.notice = text
+	a.noticeSeq++ // 同一句话再说一遍也要再弹一次
 	a.noticeUntil = time.Now().Add(4 * time.Second)
 }
 
@@ -404,7 +405,7 @@ func (a *application) importView(c *ui.Context) {
 		default:
 			ui.Spacer(c)
 		}
-		if iconButton(c.Key("paste-again"), pasteIcon, "粘贴", false, a.parsing).Clicked() {
+		if iconButton(c.Key("paste-again"), pasteIcon, "粘贴", a.parsing).Clicked() {
 			a.importText = readClipboard()
 			a.importParsed = ""
 			a.importResult = importResult{}

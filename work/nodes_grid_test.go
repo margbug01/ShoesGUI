@@ -67,7 +67,7 @@ func TestGroupControls(t *testing.T) {
 		tester := ui.NewTester(func(c *ui.Context) {
 			theme := *c.Theme()
 			theme.Dark = dark
-			mamiColors(&theme)
+			applyPalette(&theme, paletteFor(dark))
 			c.SetTheme(&theme)
 			ui.Column(c).Fill().Children(func() { a.nodeGrid(c); a.statusBar(c) })
 		}, 820, 620)
@@ -93,10 +93,11 @@ func TestGroupControls(t *testing.T) {
 		if a.nodeGroup != "全部" {
 			t.Fatal("group switch failed")
 		}
-		a.showNotice("已导入 1 个")
+		// 成功提示走 Toast；留在状态栏里的报错要能关掉
+		a.errorText = "保存失败"
 		tester.Frame()
 		click("关闭提示")
-		if a.notice != "" {
+		if a.errorText != "" {
 			t.Fatal("dismiss failed")
 		}
 	}

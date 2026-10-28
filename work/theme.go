@@ -2,74 +2,78 @@ package main
 
 import "github.com/egoist/mygo/ui"
 
-func mamiColors(t *ui.Theme) {
-	if t.Dark {
-		t.Background = ui.Hex("#1d2025")
-		t.Surface = ui.Hex("#24282e")
-		t.SurfaceHover = ui.Hex("#2b3037")
-		t.SurfacePressed = ui.Hex("#323841")
-		t.Border = ui.RGBA(255, 255, 255, 0.09)
-		t.Text = ui.Hex("#e7eaee")
-		t.TextMuted = ui.Hex("#8d949f")
-		t.Accent = ui.Hex("#a7b0bc")
-		t.AccentHover = ui.Hex("#b6bec8")
-		t.AccentPressed = ui.Hex("#98a1ad")
-		t.Selection = ui.RGBA(150, 165, 190, 0.32)
-		t.Focus = ui.RGBA(200, 210, 225, 0.45)
-		t.AccentText = ui.Hex("#15181c")
-	} else {
-		t.Background = ui.Hex("#ffffff")
-		t.Surface = ui.Hex("#ffffff")
-		t.SurfaceHover = ui.Hex("#f3f5f8")
-		t.SurfacePressed = ui.Hex("#e9edf2")
-		t.Border = ui.RGBA(20, 30, 45, 0.11)
-		t.Text = ui.Hex("#1c2027")
-		t.TextMuted = ui.Hex("#6a717c")
-		t.Accent = ui.Hex("#23272e")
-		t.AccentHover = ui.Hex("#363b44")
-		t.AccentPressed = ui.Hex("#15181d")
-		t.Selection = ui.RGBA(70, 100, 140, 0.2)
-		t.Focus = ui.RGBA(35, 39, 46, 0.35)
-		t.AccentText = ui.Hex("#ffffff")
+// palette 全 app 的颜色，深浅色各一套，照 MySpotify 的：内容区纯色，侧栏略灰，
+// 字、次要字、发丝线、悬停、按下各一档，再加一个强调色。good / bad 只用来说连没连上、出没出错
+type palette struct {
+	dark     bool
+	bg       ui.Color // 内容区的底
+	sidebar  ui.Color // 侧栏底下没有毛玻璃时铺的颜色
+	card     ui.Color // 分组、卡片的底，比内容区深一点点
+	text     ui.Color
+	muted    ui.Color
+	faint    ui.Color
+	hairline ui.Color
+	hover    ui.Color
+	press    ui.Color
+	accent   ui.Color
+	onAccent ui.Color
+	good     ui.Color
+	bad      ui.Color
+}
+
+func paletteFor(dark bool) palette {
+	if dark {
+		return palette{
+			dark:     true,
+			bg:       ui.Hex("#141416"),
+			sidebar:  ui.Hex("#1c1c1f"),
+			card:     ui.RGBA(255, 255, 255, 0.045),
+			text:     ui.Hex("#f5f5f7"),
+			muted:    ui.RGBA(235, 235, 245, 0.56),
+			faint:    ui.RGBA(235, 235, 245, 0.3),
+			hairline: ui.RGBA(255, 255, 255, 0.08),
+			hover:    ui.RGBA(255, 255, 255, 0.06),
+			press:    ui.RGBA(255, 255, 255, 0.1),
+			accent:   ui.Hex("#0a84ff"),
+			onAccent: ui.Hex("#ffffff"),
+			good:     ui.Hex("#30d158"),
+			bad:      ui.Hex("#ff453a"),
+		}
+	}
+	return palette{
+		bg:       ui.Hex("#ffffff"),
+		sidebar:  ui.Hex("#f4f4f6"),
+		card:     ui.RGBA(0, 0, 0, 0.028),
+		text:     ui.Hex("#1d1d1f"),
+		muted:    ui.RGBA(60, 60, 67, 0.62),
+		faint:    ui.RGBA(60, 60, 67, 0.32),
+		hairline: ui.RGBA(0, 0, 0, 0.07),
+		hover:    ui.RGBA(0, 0, 0, 0.04),
+		press:    ui.RGBA(0, 0, 0, 0.08),
+		accent:   ui.Hex("#007aff"),
+		onAccent: ui.Hex("#ffffff"),
+		good:     ui.Hex("#34c759"),
+		bad:      ui.Hex("#ff3b30"),
 	}
 }
 
-// paneColor / paneBorder 设置分组、引导里那句话的卡片：半透明白加一圈很淡的边
-func paneColor(t *ui.Theme) ui.Color {
-	if t.Dark {
-		return ui.RGBA(255, 255, 255, 0.045)
-	}
-	return ui.RGBA(255, 255, 255, 0.66)
+// pal 当前深浅色的色板
+func pal(c *ui.Context) palette { return paletteFor(c.Theme().Dark) }
+
+// applyPalette 把色板填进 MyGo 的主题。按钮、输入框、下拉框的底和边用 MyGo 自带的（MySpotify 也是），
+// 换掉的是底色、字色、强调色和报错色，开关、主按钮、焦点圈就都跟着强调色走
+func applyPalette(t *ui.Theme, p palette) {
+	t.Background = p.bg
+	t.Text, t.TextMuted = p.text, p.muted
+	t.Accent, t.AccentText = p.accent, p.onAccent
+	t.AccentHover = p.accent.Mix(ui.RGB(255, 255, 255), 0.12)
+	t.AccentPressed = p.accent.Mix(ui.RGB(0, 0, 0), 0.12)
+	t.Selection = p.accent.Alpha(0.3)
+	t.Focus = p.accent.Alpha(0.5)
+	t.Danger = p.bad
 }
 
-func paneBorder(t *ui.Theme) ui.Color {
-	if t.Dark {
-		return ui.RGBA(255, 255, 255, 0.07)
-	}
-	return ui.RGBA(20, 30, 45, 0.06)
-}
+// paneColor / paneBorder 分组和卡片：比内容区深一点点的底，加一圈发丝线
+func paneColor(t *ui.Theme) ui.Color { return paletteFor(t.Dark).card }
 
-// sideSelected 侧边栏选中项的底：一块半透明的白
-func sideSelected(t *ui.Theme) ui.Color {
-	if t.Dark {
-		return ui.RGBA(255, 255, 255, 0.08)
-	}
-	return ui.RGBA(255, 255, 255, 0.8)
-}
-
-// sidebarTheme 侧边栏换一份主题：自己不铺底（坐在整窗底纹上），图标用淡灰。
-// mygo 的选中项拿焦点时用 Accent 铺底、AccentText 写字，所以 Accent 就是没选中的图标色，
-// AccentText 是选中后图标和字的颜色，底色由 sideItem 盖成半透明白
-func sidebarTheme(t *ui.Theme) *ui.Theme {
-	s := *t
-	s.Surface = ui.Transparent
-	s.Accent = t.TextMuted
-	s.AccentText = t.Text
-	s.SurfacePressed = sideSelected(t)
-	if t.Dark {
-		s.SurfaceHover = ui.RGBA(255, 255, 255, 0.045)
-	} else {
-		s.SurfaceHover = ui.RGBA(20, 30, 45, 0.045)
-	}
-	return &s
-}
+func paneBorder(t *ui.Theme) ui.Color { return paletteFor(t.Dark).hairline }

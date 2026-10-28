@@ -418,7 +418,7 @@ func (a *application) modeCard(c *ui.Context) {
 	card(c, "出站模式", 0, nil, func() {
 		p, chosen, changed := a.modePick.bind(modeIndex(a.settings.Mode))
 		ui.Row(c).Children(func() {
-			ui.Segmented(c.Key("mode"), p, modes[0].label, modes[1].label, modes[2].label).Label("出站模式")
+			segmented(c.Key("mode"), p, modes[0].label, modes[1].label, modes[2].label)
 		})
 		if changed {
 			a.setMode(modes[chosen].key)

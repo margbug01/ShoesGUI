@@ -20,7 +20,10 @@ import (
 // 这里读最新 Release 里本平台的清单，有新版本就下载、验签、替换，再重启。仓库和公钥写在 mygo.json 的 updates。
 // 直接 go build 的开发版，或者放在没有写权限的地方（比如还在 dmg 里），不能自己更新，只给下载页
 
-const releasesPage = "https://github.com/margbug01/ShoesGUI/releases"
+const (
+	repoPage     = "https://github.com/margbug01/ShoesGUI"
+	releasesPage = repoPage + "/releases"
+)
 
 type updateStage int
 
@@ -261,87 +264,77 @@ func noteLines(md string, max int) []string {
 	return out
 }
 
-// sidebarVersion 侧栏底部的版本，取 mygo.json 的版本号，只显示到小版本
-func sidebarVersion() string {
-	parts := strings.SplitN(mygo.App.Version(), ".", 3)
-	if len(parts) < 2 || parts[0] == "" {
-		return "Shoes"
-	}
-	return "Shoes · " + parts[0] + "." + parts[1]
-}
-
-func (a *application) updateSettings(c *ui.Context) {
+// updateRows 设置页「关于」里的版本和更新：现在是哪一版、有没有新的、下载到哪了，再加一个自动检查的开关
+func (a *application) updateRows(c *ui.Context) {
 	u := a.update.view()
 	current := mygo.App.Version()
 	if current == "" {
 		current = "开发版"
 	}
-	group(c, "更新", func() {
-		t := c.Theme()
-		switch {
-		case !u.enabled:
-			settingRow(c, "当前版本 "+current, "这一份不能自己更新（开发版，或所在文件夹没有写入权限），新版本请到 GitHub 下载", func() {
-				ui.Link(c, "打开下载页", releasesPage)
-			})
-		case u.stage == updateAvailable:
-			settingRow(c, "有新版本 "+u.version, "当前 "+current+"。更新时 Shoes 会重启一下，接管着的系统代理重启后接着接管", func() {
-				if ui.PrimaryButton(c.Key("install-update"), "更新并重启").MinWidth(88).Clicked() {
-					a.installUpdate()
-				}
-			})
-			if lines := noteLines(u.notes, 8); len(lines) > 0 {
-				ui.Column(c).FillWidth().Gap(4).Padding(0, 0, 12, 0).Children(func() {
-					for _, line := range lines {
-						ui.Text(c, line).FontSize(12).TextColor(t.TextMuted)
-					}
-				})
+	switch {
+	case !u.enabled:
+		rowWith(c, "Shoes "+current, "这一份不能自己更新（开发版，或所在文件夹没有写入权限），新版本请到 GitHub 下载", u.err, nil, func() {
+			ui.Link(c, "打开下载页", releasesPage)
+		})
+	case u.stage == updateAvailable:
+		notes := func() {
+			lines := noteLines(u.notes, 8)
+			if len(lines) == 0 {
+				return
 			}
-		case u.stage == updateDownloading:
-			settingRow(c, "正在下载 "+u.version, fmt.Sprintf("%d%%，装好会自动重启", int(u.progress*100)), func() {
-				ui.Progress(c, u.progress).Width(160)
-			})
-		case u.stage == updateReady:
-			settingRow(c, u.version+" 已经装好", "重启 Shoes 后生效", func() {
-				if ui.PrimaryButton(c.Key("restart-update"), "立即重启").MinWidth(88).Clicked() {
-					a.restartForUpdate()
+			ui.Column(c).FillWidth().Gap(3).Padding(6, 0, 0, 0).Children(func() {
+				for _, line := range lines {
+					ui.Text(c, line).FontSize(12).TextColor(pal(c).muted).LineHeight(1.4)
 				}
 			})
-		default: // 没查过、已是最新、检查中
-			desc := "还没检查过"
-			if u.latest {
-				at := u.checked.Format("15:04")
-				if y, m, d := u.checked.Date(); y != time.Now().Year() || m != time.Now().Month() || d != time.Now().Day() {
-					at = u.checked.Format("01-02 15:04")
-				}
-				desc = "已是最新 · " + at + " 检查过"
+		}
+		rowWith(c, "有新版本 "+u.version, "现在是 "+current+"。更新时 Shoes 会重启一下，接管着的系统代理重启后接着接管", u.err, notes, func() {
+			if ui.PrimaryButton(c.Key("install-update"), "更新并重启").MinWidth(88).Clicked() {
+				a.installUpdate()
 			}
-			settingRow(c, "当前版本 "+current, desc, func() {
-				label := "检查更新"
-				if u.stage == updateChecking {
-					label = "检查中…"
-				}
-				if ui.Button(c.Key("check-update"), label).Disabled(u.stage == updateChecking).Clicked() {
-					a.checkUpdate(true)
-				}
-			})
+		})
+	case u.stage == updateDownloading:
+		rowWith(c, "正在下载 "+u.version, fmt.Sprintf("%d%%，装好会自动重启", int(u.progress*100)), u.err, nil, func() {
+			ui.Progress(c, u.progress).Width(140)
+		})
+	case u.stage == updateReady:
+		rowWith(c, u.version+" 已经装好", "重启 Shoes 后生效", u.err, nil, func() {
+			if ui.PrimaryButton(c.Key("restart-update"), "立即重启").MinWidth(88).Clicked() {
+				a.restartForUpdate()
+			}
+		})
+	default: // 没查过、已是最新、检查中
+		desc := "还没检查过更新"
+		if u.latest {
+			at := u.checked.Format("15:04")
+			if y, m, d := u.checked.Date(); y != time.Now().Year() || m != time.Now().Month() || d != time.Now().Day() {
+				at = u.checked.Format("01-02 15:04")
+			}
+			desc = "已是最新 · " + at + " 检查过"
 		}
-		if u.err != "" {
-			ui.Text(c, u.err).FontSize(12).TextColor(t.Danger).Padding(0, 0, 10, 0)
-		}
-		if u.enabled {
-			settingRow(c, "自动检查更新", "打开时和之后每 12 小时问一次 GitHub，有新版本只提示，不会自己装", func() {
-				p, on, changed := a.updatePick.bind(!a.settings.SkipUpdateCheck)
-				ui.Switch(c.Key("auto-update-check"), p)
-				if changed {
-					next := a.settings
-					next.SkipUpdateCheck = !on
-					if a.save(next) && on {
-						a.checkUpdate(false)
-					}
+		rowWith(c, "Shoes "+current, desc, u.err, nil, func() {
+			label := "检查更新"
+			if u.stage == updateChecking {
+				label = "检查中…"
+			}
+			if ui.Button(c.Key("check-update"), label).Disabled(u.stage == updateChecking).Clicked() {
+				a.checkUpdate(true)
+			}
+		})
+	}
+	if u.enabled {
+		row(c, "自动检查更新", "打开时和之后每 12 小时问一次 GitHub，有新版本只提示，不会自己装", func() {
+			p, on, changed := a.updatePick.bind(!a.settings.SkipUpdateCheck)
+			ui.Switch(c.Key("auto-update-check"), p).Label("自动检查更新")
+			if changed {
+				next := a.settings
+				next.SkipUpdateCheck = !on
+				if a.save(next) && on {
+					a.checkUpdate(false)
 				}
-			})
-		}
-	})
+			}
+		})
+	}
 }
 
 // updateBadge 侧栏底部的新版本提示，点了去设置页更新
@@ -350,13 +343,18 @@ func (a *application) updateBadge(c *ui.Context) {
 	if u.stage != updateAvailable && u.stage != updateDownloading && u.stage != updateReady {
 		return
 	}
-	ui.Row(c).Padding(0, 12).Children(func() {
-		badge := ui.ButtonBase(c.Key("update-badge")).Padding(6, 8).Radius(8).Cursor(ui.CursorPointer)
-		if badge.Hovered() {
-			badge.Background(c.Theme().SurfaceHover)
-		}
-		if badge.Children(func() { ui.Text(c, "新版本 "+u.version).FontSize(12).TextColor(c.Theme().Accent) }).Clicked() {
-			a.tab = "设置"
-		}
+	p := pal(c)
+	badge := ui.ButtonBase(c.Key("update-badge")).FillWidth().Height(32).PaddingX(12).Gap(8).Radius(8).AlignItems(ui.Center).Justify(ui.Start).Label("新版本 " + u.version).FocusRing(false).Cursor(ui.CursorPointer)
+	bg := ui.Transparent
+	if badge.Hovered() {
+		bg = p.hover
+	}
+	badge.Background(badge.AnimateColor("bg", bg, hoverFade))
+	badge.Children(func() {
+		ui.Box(c).Size(6, 6).Radius(3).Background(p.accent).Shrink(0)
+		ui.Text(c, "新版本 "+u.version).FontSize(12.5).FontWeight(500).TextColor(p.accent).SingleLine()
 	})
+	if badge.Clicked() {
+		a.tab = "设置"
+	}
 }
