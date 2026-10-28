@@ -16,15 +16,15 @@
 
 ## 为什么用它
 
-**打开就能用。** 内核随 Shoes 一起常驻，右上角「启动」只负责接管系统代理。没点启动也能测速，也能把 `127.0.0.1:10808` 直接填给别的程序。
+**打开就能用。** 内核随 Shoes 一起常驻，仪表盘上的「连接」只负责接管系统代理。没点连接也能测速，也能把 `127.0.0.1:10808` 直接填给别的程序。
 
 **订阅是活的。** 订阅地址绑在分组上，点「更新订阅」时同名节点就地换成新配置，新出的补上，下架的删掉；你手动加进这一组的节点不会被碰。读订阅时报的是 v2rayN 的 User-Agent，机场会回分享链接，而不是一整份 Clash YAML。
 
 **测速和 v2rayN 一样准。** 「真连接延迟」另起一个只用来测速的内核，经每个节点连发两次 `generate_204` 取较小的那次；也有 TCPing。可以按延迟排序，一键「用最快的」；结果跟着节点配置走，换了配置或更新了订阅就清零重测。
 
-**状态不骗人。** 网速曲线、本次流量、活动连接、内核内存、真实出口 IP 都在仪表盘上；没接管系统代理时，出口卡会直接告诉你浏览器现在是直连。
+**状态不骗人。** 网速曲线（指针放上去能看那一秒的上下行）、本次流量、活动连接、内核内存、真实出口 IP 都在仪表盘上，侧栏底部随时看得到连没连上、用的哪个节点；没接管系统代理时，出口卡会直接告诉你浏览器现在是直连。
 
-**安静地待在托盘。** 关窗口只是收进托盘（macOS 上是顶部菜单栏），右键能启动停止、切节点、切模式；图标灰色是没接管，绿色是接管中。
+**安静地待在托盘。** 关窗口只是收进托盘（macOS 上是顶部菜单栏），右键能连接断开、切节点、切模式；图标灰色是没接管，绿色是接管中。
 
 **看得到每个网站怎么走。** 日志页的「连接记录」像 v2rayN 的连接页，列出每个域名走了直连还是经哪个节点、命中哪条规则（国内域名、国内 IP、局域网、其余）、连了几次、多少流量，能只看代理或只看直连、能搜，右键能复制域名或断开它的连接。记录只放在内存里，退出 Shoes 就清空。
 
@@ -32,7 +32,7 @@
 
 **数据留在本机。** 节点和设置加密后存在本机：Windows 用 DPAPI，放在 `%APPDATA%\ShoesGUI`；macOS 用 AES-256-GCM，密钥放在登录钥匙串里，数据放在 `~/Library/Application Support/ShoesGUI`。改系统代理前先记一份恢复日志，就算程序意外退出，下次打开也会把原来的代理设置还回去。
 
-**更新点一下就好。** 有新版本时侧栏会提示，到「设置 › 更新」点「更新并重启」，Shoes 会下载、校验签名、替换文件，然后自己重新打开；更新前接管着系统代理的话，重新打开后接着接管。更新包都用发布者的私钥签过名，签名对不上就不装。下载走 Shoes 自己的内核（国内直连 GitHub 常常很慢），节点不通再直连。更新时只下载变动的部分，内核也跟着一起更新。0.2.0 及更早的版本要手动下载一次新版，之后就能在应用里更新。
+**更新点一下就好。** 有新版本时侧栏会提示，到「设置 › 关于」点「更新并重启」，Shoes 会下载、校验签名、替换文件，然后自己重新打开；更新前接管着系统代理的话，重新打开后接着接管。更新包都用发布者的私钥签过名，签名对不上就不装。下载走 Shoes 自己的内核（国内直连 GitHub 常常很慢），节点不通再直连。更新时只下载变动的部分，内核也跟着一起更新。0.2.0 及更早的版本要手动下载一次新版，之后就能在应用里更新。
 
 ## 截图
 
@@ -42,16 +42,16 @@
     <td width="50%"><img src="docs/screenshots/import-light.webp" alt="粘贴导入"></td>
   </tr>
   <tr>
-    <td align="center">代理：分组、订阅更新、按延迟排序</td>
+    <td align="center">代理：一行一个节点，分组、订阅更新、按延迟排序</td>
     <td align="center">粘贴导入：先预览，点了才导</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/settings-dark.webp" alt="设置"></td>
-    <td width="50%"><img src="docs/screenshots/logs-dark.webp" alt="日志"></td>
+    <td width="50%"><img src="docs/screenshots/logs-dark.webp" alt="日志页的连接记录"></td>
   </tr>
   <tr>
     <td align="center">设置：改了就存，不用找保存按钮</td>
-    <td align="center">日志：报错标红，连接异常默认收起</td>
+    <td align="center">日志：每个域名走直连还是代理</td>
   </tr>
 </table>
 
@@ -73,7 +73,7 @@
 | 传输与加密 | TCP · WebSocket · XHTTP · TLS · Reality · Vision · VLESS 原生加密 |
 | 导入 | 单条或批量分享链接 · Base64 订阅内容 · HTTP(S) 订阅地址 |
 | 分享与导出 | 单节点二维码 / 链接 · 分组或全部节点 TXT · 独立分享订阅地址 |
-| 出站模式 | 规则（局域网和国内直连）· 全局 · 直连，运行中随时切 |
+| 出站模式 | 规则（局域网和国内直连）· 全局 · 直连，连着的时候随时切 |
 
 原生 HY2 测试版：配合本仓库 `native/` 补丁构建的 shoes 内核，可导入 `hy2://` / `hysteria2://`，通过 QUIC 转发 TCP 应用流量，无辅助进程。支持密码、SNI、SHA256 证书固定、连接复用、真连接测速和分享。下载带宽默认 100 Mbps，可在节点编辑中调整，0 为自动；填写过高不保证提速。无指纹的跳过证书验证会被拒绝。上游原版 0.3.4 不支持此出站，不能只更新 GUI。Releases 里 Windows 和 macOS 的包都已经带上这个内核。
 
@@ -101,20 +101,21 @@
 
 | Windows | macOS | 作用 |
 | --- | --- | --- |
-| `Ctrl+F` | `⌘F` | 搜索节点 |
+| `Ctrl+F` | `⌘F` | 搜索节点；在日志页是搜这一页 |
 | `Ctrl+N` | `⌘N` | 手动添加节点 |
 | `Ctrl+V` | `⌘V` | 在代理页打开粘贴导入（输入框里照常是粘贴） |
+| `Esc` | `Esc` | 从编辑、导入、分享回到节点列表；关掉弹窗 |
 
 ## 常见问题
 
 <details>
 <summary>订阅在 v2rayN 里能用，导进来却是一堆奇怪的节点？</summary>
 
-很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。Shoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.3`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
+很多机场按 User-Agent 决定回什么格式，不认识的客户端就回 Clash YAML。Shoes 现在报的是 `v2rayN/7.13.8 ShoesGUI/0.4`，能拿到分享链接；如果收到的仍是整份配置，导入页会直接提示不支持，不会把里面的 DNS、规则网址当成节点。
 </details>
 
 <details>
-<summary>显示「运行中」，网页却打不开？</summary>
+<summary>显示「已连接」，网页却打不开？</summary>
 
 「已连接」只代表系统代理已经交给 Shoes，不代表当前节点一定通。先在代理页测个速，再看仪表盘的出口 IP 卡和日志页的红字；某个网站打不开时，在日志页的「连接记录」里搜它的域名，看它走的是直连还是哪个节点。
 </details>
@@ -132,7 +133,7 @@ shoes 内核在 Windows 上还不支持 TUN，所以界面上干脆没放这个�
 </details>
 
 <details>
-<summary>「设置 › 更新」说这一份不能自己更新？</summary>
+<summary>「设置 › 关于」说这一份不能自己更新？</summary>
 
 Shoes 要能改写自己所在的位置才能更新。直接从 dmg 里打开的、Windows 上放在 `Program Files` 这类没有写入权限的文件夹里的，都更新不了：macOS 上把 app 拖进「应用程序」再打开，Windows 上解压到自己的文件夹（比如桌面或 `D:\Shoes`）就行。自己用 `go build` 编的开发版也不能更新。
 </details>
@@ -169,7 +170,7 @@ exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里�
 ```sh
 cd work
 go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon assets/icon.png --manifest gui \
-  --product-name Shoes --file-description Shoes --product-version 0.3.1 --file-version 0.3.1 --original-filename ShoesGUI.exe
+  --product-name Shoes --file-description Shoes --product-version 0.4.0 --file-version 0.4.0 --original-filename ShoesGUI.exe
 ```
 
 ### macOS
@@ -189,8 +190,8 @@ go run github.com/egoist/mygo/cmd/mygo@v0.6.4 build
 
 两个平台都在 Mac 上一次打出来。应用的自动更新只认用更新私钥签过名的包，所以发版必须用 `mygo build` 并带上私钥。
 
-1. 改版本号：`work/mygo.json` 的 `version`、上面 syso 命令里的两个版本号（重新生成 syso）、`work/import.go` 订阅 UA 里的版本。侧栏显示的版本直接读 `mygo.json`。
-2. 在 [`CHANGELOG.md`](CHANGELOG.md) 写好这个版本的一节，应用里「设置 › 更新」显示的更新说明就是它；缺这一节 `mygo build` 会停下。
+1. 改版本号：`work/mygo.json` 的 `version`、上面 syso 命令里的两个版本号（重新生成 syso）、`work/import.go` 订阅 UA 里的版本。「设置 › 关于」显示的版本直接读 `mygo.json`。
+2. 在 [`CHANGELOG.md`](CHANGELOG.md) 写好这个版本的一节，应用里「设置 › 关于」显示的更新说明就是它；缺这一节 `mygo build` 会停下。
 3. 两个内核放好（都不进仓库）：`work/resources/darwin-arm64/shoes` 和 `work/resources/windows-amd64/shoes.exe`。
 4. 打包：
 

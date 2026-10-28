@@ -31,9 +31,9 @@ func (a *application) createTray() {
 	tray.OnClick(a.showWindow)
 	tray.OnRightClick(func() {
 		_, _, _, proxy := a.engine.snapshot()
-		toggle := "启动"
+		toggle := "连接"
 		if proxy {
-			toggle = "停止"
+			toggle = "断开"
 		}
 		var modeItems []*mygo.MenuItem
 		for _, m := range modes {
