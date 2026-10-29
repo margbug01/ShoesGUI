@@ -316,8 +316,12 @@ func (a *application) nodeRow(c *ui.Context, node Node, index, number int, chose
 		}
 		ui.Row(c).Width(delayWidth).Justify(ui.End).Children(func() { delayTag(c, a.delays, key) })
 		ui.Box(c).Size(moreWidth, moreWidth).Center().Children(func() {
-			if hovered {
-				iconButton(c.Key("more"), moreIcon, "更多操作", false).Size(moreWidth, moreWidth).Menu(menu)
+			// 每行都建着，只是不悬停时藏起来。MyGo 在选中后的下一帧才把选的项交给菜单，
+			// 那时鼠标已经在菜单上、离开了这一行；按钮要是没建，选的项就没人接，点了等于没点。
+			// 菜单开着时按钮有焦点，照样显示，看得出是哪一行的菜单
+			more := iconButton(c.Key("more"), moreIcon, "更多操作", false).Size(moreWidth, moreWidth).Menu(menu)
+			if !hovered && !more.Focused() {
+				more.Invisible()
 			}
 		})
 	})
