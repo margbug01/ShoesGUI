@@ -162,7 +162,7 @@ func (a *application) groupChips(c *ui.Context, groups []string, counts map[stri
 				count = len(a.settings.Nodes)
 			}
 			chip := filterChip(c.Key("group-"+group), group, count, a.nodeGroup == group)
-			if group != "全部" && group != "未分组" {
+			if group != "全部" {
 				chip.ContextMenu(func(m *ui.Menu) { a.groupMenu(m, group, false) })
 			}
 			if chip.Clicked() {
@@ -178,7 +178,8 @@ func (a *application) groupChips(c *ui.Context, groups []string, counts map[stri
 	})
 }
 
-// groupMenu 分组的菜单。export 为 true 时是「⋯」里那份，多一项导出整个分组
+// groupMenu 分组的菜单。export 为 true 时是「⋯」里那份，多一项导出整个分组。
+// 「未分组」不是建出来的分组，删不了；给它「重命名」就是给这些节点起个组名
 func (a *application) groupMenu(m *ui.Menu, group string, export bool) {
 	items := 0
 	if export {
@@ -198,15 +199,23 @@ func (a *application) groupMenu(m *ui.Menu, group string, export bool) {
 			}
 		}
 	}
-	if group == "全部" || group == "未分组" {
+	if group == "全部" {
 		return
 	}
 	if items > 0 {
 		m.Separator()
 	}
+	ungrouped := group == "未分组" // 没有未分组的节点时它的胶囊不出现，选着它也会跳回「全部」
 	if m.Item("重命名…").Chosen() {
-		a.renaming, a.groupDraft, a.groupError = group, group, ""
+		draft := group
+		if ungrouped {
+			draft = "" // 「未分组」本身不能当名字，留空让人直接输
+		}
+		a.renaming, a.groupDraft, a.groupError = group, draft, ""
 		a.addingGroup, a.groupDelete = false, ""
+	}
+	if ungrouped {
+		return
 	}
 	if m.Item("删除分组…").Chosen() {
 		a.groupDelete, a.renaming, a.addingGroup = group, "", false
@@ -408,8 +417,13 @@ func (a *application) nodeDialogs(c *ui.Context, counts map[string]int) {
 	}
 
 	naming := a.addingGroup || a.renaming != ""
-	title, action := "新建分组", "创建分组"
-	if a.renaming != "" {
+	title, action, hint := "新建分组", "创建分组", ""
+	switch a.renaming {
+	case "":
+	case "未分组":
+		title, action = "给「未分组」起个名字", "确定"
+		hint = fmt.Sprintf("这 %d 个节点会一起放进这个新分组。", counts["未分组"])
+	default:
 		title, action = "重命名分组「"+a.renaming+"」", "重命名"
 	}
 	submit := func() {
@@ -420,7 +434,7 @@ func (a *application) nodeDialogs(c *ui.Context, counts map[string]int) {
 		}
 	}
 	closeNaming := func() { a.addingGroup, a.renaming, a.groupDraft, a.groupError = false, "", "", "" }
-	if dialog(c, "group-name", naming, 360, title, "", func() {
+	if dialog(c, "group-name", naming, 360, title, hint, func() {
 		input := ui.TextInput(c.Key("group-name"), &a.groupDraft).FillWidth().Placeholder("分组名称").AutoFocus().Label("分组名称").Margin(6, 0, 0, 0)
 		if input.Submitted() {
 			submit()

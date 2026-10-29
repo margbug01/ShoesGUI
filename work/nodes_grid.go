@@ -77,28 +77,33 @@ func (a *application) addGroup() {
 	}
 }
 
-// renameGroup 把分组 old 改成输入框里的名字，节点和订阅跟着走
+// renameGroup 把分组 old 改成输入框里的名字，节点和订阅跟着走。old 是「未分组」时，
+// 就是把没分组的节点（Group 为空）都放进一个叫这个名字的新分组
 func (a *application) renameGroup(old string) {
 	name := strings.TrimSpace(a.groupDraft)
 	if a.groupError = a.groupNameError(name, old); a.groupError != "" {
 		return
 	}
+	key, ok := groupKey(old)
+	if !ok {
+		return
+	}
 	next := a.settings
 	next.Groups = slices.Clone(next.Groups)
-	if i := slices.Index(next.Groups, old); i >= 0 {
+	if i := slices.Index(next.Groups, key); key != "" && i >= 0 {
 		next.Groups[i] = name
 	} else {
 		next.Groups = append(next.Groups, name)
 	}
 	next.Nodes = slices.Clone(next.Nodes)
 	for i := range next.Nodes {
-		if next.Nodes[i].Group == old {
+		if next.Nodes[i].Group == key {
 			next.Nodes[i].Group = name
 		}
 	}
-	if source, ok := next.Subscriptions[old]; ok {
+	if source, ok := next.Subscriptions[key]; ok {
 		next.Subscriptions = maps.Clone(next.Subscriptions)
-		delete(next.Subscriptions, old)
+		delete(next.Subscriptions, key)
 		next.Subscriptions[name] = source
 	}
 	if a.save(next) {
