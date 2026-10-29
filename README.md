@@ -176,7 +176,7 @@ exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里�
 ```sh
 cd work
 go run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --icon assets/icon.png --manifest gui \
-  --product-name MyShoes --file-description MyShoes --product-version 0.4.2 --file-version 0.4.2 --original-filename ShoesGUI.exe
+  --product-name MyShoes --file-description MyShoes --product-version 0.4.3 --file-version 0.4.3 --original-filename ShoesGUI.exe
 ```
 
 ### macOS
