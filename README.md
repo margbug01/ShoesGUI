@@ -4,7 +4,9 @@
 
 # MyShoes
 
-原名 Shoes / ShoesGUI。macOS 使用系统默认字体；Windows 继续使用 MiSans。配置目录、钥匙串标识、单实例锁、仓库和更新签名保持兼容旧版。安装包和应用显示名为 MyShoes；内部程序仍叫 ShoesGUI，保证旧版更新后能正常重启。
+A native Windows and macOS GUI for the shoes proxy core, with subscriptions, latency testing and rule-based routing.
+
+[官网 / Website](https://margbug01.github.io/ShoesGUI/) · [English](https://margbug01.github.io/ShoesGUI/en.html) · [下载 / Download](https://github.com/margbug01/ShoesGUI/releases/latest)
 
 一个顺手的 Windows / macOS 代理客户端
 
@@ -56,6 +58,10 @@
     <td align="center">日志：每个域名走直连还是代理</td>
   </tr>
 </table>
+
+## 升级兼容说明
+
+原名 Shoes / ShoesGUI。macOS 使用系统默认字体；Windows 继续使用 MiSans。配置目录、钥匙串标识、单实例锁、仓库和更新签名保持兼容旧版。安装包和应用显示名为 MyShoes；内部程序仍叫 ShoesGUI，保证旧版更新后能正常重启。
 
 ## 快速开始
 
@@ -239,3 +245,13 @@ CHANGELOG.md       更新记录，也是应用里显示的更新说明
 ## 许可证
 
 MyShoes 以 [GPL-3.0](LICENSE) 发布，和内置的国内规则数据是同一个许可：可以自由使用、修改和再发布，再发布时也要同样开源。随附的 shoes 内核、MyGo、MiSans 字体等第三方组件按各自的许可证分发，原文都在 [`outputs/licenses/`](outputs/licenses/)。
+
+## Website / 官网维护
+
+The GitHub Pages site is published from `docs/` on `main`. Keep both language pages and `docs/sitemap.xml` in sync when changing product details. No build step is required.
+
+官网从 `main` 分支的 `docs/` 发布。更新功能说明时同步修改中英文页面和 `docs/sitemap.xml`，不需要构建。
+
+## More MyGo apps / 其他作品
+
+[Mami](https://github.com/margbug01/mami) · [MySpotify](https://github.com/margbug01/MySpotify) · [MyShoes](https://github.com/margbug01/ShoesGUI) · [Candle](https://github.com/margbug01/Candle)
