@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -14,6 +18,24 @@ func TestMain(tests *testing.M) {
 	networkCommand = func(args ...string) (string, error) { panic("真实系统代理命令被测试禁止") }
 	os.Exit(tests.Run())
 }
+
+// 内核要继承 GUI 提高后的打开文件数上限，不能被 Go 恢复成 launchd 给的 256
+func TestDarwinKernelFileLimit(t *testing.T) {
+	var limit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", "ulimit -n")
+	configureKernel(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != strconv.FormatUint(limit.Cur, 10) {
+		t.Fatalf("内核拿到的上限 %s，GUI 自己是 %d", got, limit.Cur)
+	}
+}
+
 func TestDarwinCipher(t *testing.T) {
 	plain := []byte("secret")
 	encrypted, err := protect(plain, false)

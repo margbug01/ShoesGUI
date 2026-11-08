@@ -476,6 +476,15 @@ func newKernelGroup(dir string) (kernelGroup, error) {
 }
 func configureKernel(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
 
+// Go 启动时把自己的打开文件数上限提到最高，但 exec 时会给子进程恢复成 launchd 给的 256，
+// 内核连接一多就 Too many open files、网页全打不开。自己设一次，Go 就不再恢复，内核跟着用高的上限
+func init() {
+	var limit syscall.Rlimit
+	if syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit) == nil {
+		syscall.Setrlimit(syscall.RLIMIT_NOFILE, &limit)
+	}
+}
+
 // macOS 上内核不盯配置文件，改完配置发 SIGHUP 叫它马上换（--no-reload 时 SIGHUP 照样管用）
 const watchConfig = false
 
