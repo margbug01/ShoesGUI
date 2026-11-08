@@ -144,6 +144,24 @@ func logged(e *engine, text string) bool {
 	return slices.ContainsFunc(logs, func(l logEntry) bool { return strings.Contains(l.text, text) })
 }
 
+// 连接一多内核也得接着收新连接：macOS 上内核曾被限在 256 个文件，300 条长连接（内核里各占进出两个）就 Too many open files
+func TestKernelAcceptsWithManyOpenConnections(t *testing.T) {
+	_, s := runningKernel(t, 0, "a0")
+	echo := echoAddr(t)
+	for i := range 300 {
+		c, err := tunnel(s.Port, echo)
+		if err != nil {
+			t.Fatalf("第 %d 条连接不通：%v", i+1, err)
+		}
+		defer c.Close()
+	}
+	c, err := tunnel(s.Port, echo)
+	if err != nil {
+		t.Fatal("开着 300 条连接时新连接不通：", err)
+	}
+	c.Close()
+}
+
 // 换订阅、改节点：内核就地换配置，进程不换，开着的连接不断，新连接照常，新节点真的进了内核
 func TestReloadKeepsConnections(t *testing.T) {
 	e, s := runningKernel(t, 1, "a0", "a1", "a2")

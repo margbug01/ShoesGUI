@@ -1,0 +1,3536 @@
+diff --git a/src/cli.rs b/src/cli.rs
+index e4f717c..9645c1f 100644
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -1,6 +1,8 @@
+ use aws_lc_rs::rand::{SecureRandom, SystemRandom};
+ use base64::engine::{Engine as _, general_purpose::STANDARD};
+ use log::debug;
++use std::sync::Arc;
++use std::time::Instant;
+ use tokio::runtime::Builder;
+ 
+ use crate::reality::generate_keypair;
+@@ -54,6 +56,23 @@ fn print_usage_and_exit(arg0: String) -> ! {
+ }
+ 
+ pub fn main() {
++    std::process::exit(run());
++}
++
++struct FileLogShutdownGuard {
++    writers: Vec<Arc<logging::FileLogWriter>>,
++}
++
++impl Drop for FileLogShutdownGuard {
++    fn drop(&mut self) {
++        let deadline = Instant::now() + logging::FILE_LOG_FLUSH_TIMEOUT;
++        for writer in &self.writers {
++            let _ = writer.shutdown_timeout(deadline.saturating_duration_since(Instant::now()));
++        }
++    }
++}
++
++fn run() -> i32 {
+     let mut args: Vec<String> = std::env::args().collect();
+     let arg0 = args.remove(0);
+     if args.first().is_some_and(|arg| arg == "check") {
+@@ -92,7 +111,7 @@ pub fn main() {
+             "--no-reload" => no_reload = true,
+             "--version" | "-V" => {
+                 println!("shoes {}", env!("CARGO_PKG_VERSION"));
+-                return;
++                return 0;
+             }
+             other => {
+                 eprintln!("Invalid argument: {other}");
+@@ -103,6 +122,9 @@ pub fn main() {
+ 
+     let directives = logging::resolve_directives();
+     let mut writers: Vec<Box<dyn logging::LogWriter>> = Vec::new();
++    let mut file_log_guard = FileLogShutdownGuard {
++        writers: Vec::new(),
++    };
+     writers.push(Box::new(crate::control::logs::Writer));
+ 
+     if log_files.is_empty() || log_files.iter().any(|p| p == "-") {
+@@ -113,15 +135,22 @@ pub fn main() {
+             continue;
+         }
+         match logging::FileLogWriter::new(path) {
+-            Ok(w) => writers.push(Box::new(w)),
++            Ok(writer) => {
++                let writer = Arc::new(writer);
++                file_log_guard.writers.push(writer.clone());
++                writers.push(Box::new(writer));
++            }
+             Err(e) => {
+                 eprintln!("Failed to open log file {path}: {e}");
+-                std::process::exit(1);
++                return 1;
+             }
+         }
+     }
+ 
+-    logging::init_multi_logger(writers, directives);
++    if let Err(error) = logging::init_multi_logger(writers, directives) {
++        eprintln!("Failed to initialize logger: {error}");
++        return 1;
++    }
+ 
+     if args
+         .first()
+@@ -134,10 +163,10 @@ pub fn main() {
+             }
+             Err(error) => {
+                 eprintln!("VLESS encryption generation failed: {error}");
+-                std::process::exit(1);
++                return 1;
+             }
+         }
+-        return;
++        return 0;
+     }
+ 
+     if args.iter().any(|s| s == "generate-reality-mldsa65-keypair") {
+@@ -148,10 +177,10 @@ pub fn main() {
+             }
+             Err(error) => {
+                 eprintln!("ML-DSA-65 key generation failed: {error}");
+-                std::process::exit(1);
++                return 1;
+             }
+         }
+-        return;
++        return 0;
+     }
+ 
+     if args.iter().any(|s| s == "generate-reality-keypair") {
+@@ -164,7 +193,7 @@ pub fn main() {
+         println!(
+             "--------------------------------------------------------------------------------"
+         );
+-        return;
++        return 0;
+     }
+ 
+     if let Some(pos) = args
+@@ -181,7 +210,7 @@ pub fn main() {
+                         eprintln!(
+                             "Password generation is only necessary for shadowsocks 2022 ciphers."
+                         );
+-                        std::process::exit(1);
++                        return 1;
+                     }
+                 };
+                 match ShadowsocksCipher::try_from(base_cipher) {
+@@ -205,7 +234,7 @@ pub fn main() {
+                         eprintln!("  2022-blake3-aes-128-gcm");
+                         eprintln!("  2022-blake3-aes-256-gcm");
+                         eprintln!("  2022-blake3-chacha20-poly1305");
+-                        std::process::exit(1);
++                        return 1;
+                     }
+                 }
+             }
+@@ -218,10 +247,10 @@ pub fn main() {
+                 eprintln!("  2022-blake3-aes-128-gcm");
+                 eprintln!("  2022-blake3-aes-256-gcm");
+                 eprintln!("  2022-blake3-chacha20-poly1305");
+-                std::process::exit(1);
++                return 1;
+             }
+         }
+-        return;
++        return 0;
+     }
+ 
+     if args.iter().any(|s| s == "generate-vless-user-id") {
+@@ -233,7 +262,7 @@ pub fn main() {
+         println!(
+             "--------------------------------------------------------------------------------"
+         );
+-        return;
++        return 0;
+     }
+ 
+     if args.is_empty() {
+@@ -283,6 +312,5 @@ pub fn main() {
+         }
+     };
+     runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+-    log::logger().flush();
+-    std::process::exit(code);
++    code
+ }
+diff --git a/src/crypto/crypto_tls_stream.rs b/src/crypto/crypto_tls_stream.rs
+index 9c4c6f5..ad1d2ed 100644
+--- a/src/crypto/crypto_tls_stream.rs
++++ b/src/crypto/crypto_tls_stream.rs
+@@ -2,8 +2,10 @@
+ 
+ use bytes::{Buf, Bytes};
+ use futures::ready;
++use futures::task::{ArcWake, AtomicWaker, waker_ref};
+ use std::io::{self, BufRead, Write};
+ use std::pin::Pin;
++use std::sync::Arc;
+ use std::task::{Context, Poll};
+ 
+ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+@@ -77,11 +79,26 @@ impl TlsState {
+     }
+ }
+ 
++#[derive(Default)]
++struct TlsWake {
++    reader: AtomicWaker,
++    writer: AtomicWaker,
++}
++
++impl ArcWake for TlsWake {
++    fn wake_by_ref(this: &Arc<Self>) {
++        this.reader.wake();
++        this.writer.wake();
++    }
++}
++
+ pub struct CryptoTlsStream<IO> {
+     io: IO,
++    wake: Arc<TlsWake>,
+     pub(super) session: TlsConnection,
+     state: TlsState,
+     need_flush: bool,
++    output_progress: bool,
+     input: TlsInput,
+     write_raw: bool,
+     raw_write_prefix: Option<Bytes>,
+@@ -110,9 +127,11 @@ impl<IO: AsyncStream> CryptoTlsStream<IO> {
+     fn with_input(io: IO, session: TlsConnection, input: TlsInput) -> Self {
+         Self {
+             io,
++            wake: Arc::default(),
+             session,
+             state: TlsState::Stream,
+             need_flush: false,
++            output_progress: false,
+             input,
+             write_raw: false,
+             raw_write_prefix: None,
+@@ -245,6 +264,13 @@ impl<IO: AsyncStream> CryptoTlsStream<IO> {
+     }
+ 
+     pub(super) fn poll_receive_tls(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
++        let wake = self.wake.clone();
++        wake.reader.register(cx.waker());
++        let waker = waker_ref(&wake);
++        self.poll_receive_tls_inner(&mut Context::from_waker(&waker))
++    }
++
++    fn poll_receive_tls_inner(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+         let n = match &mut self.input {
+             TlsInput::Stream => {
+                 let mut adapter = SyncReadAdapter {
+@@ -313,6 +339,7 @@ impl<IO: AsyncStream> CryptoTlsStream<IO> {
+         match self.session.write_tls(&mut adapter) {
+             Ok(n) => {
+                 self.need_flush |= n != 0;
++                self.output_progress |= n != 0;
+                 Poll::Ready(Ok(n))
+             }
+             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Poll::Pending,
+@@ -321,6 +348,14 @@ impl<IO: AsyncStream> CryptoTlsStream<IO> {
+     }
+ 
+     pub fn poll_drain_tls(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let wake = self.wake.clone();
++        wake.writer.register(cx.waker());
++        let waker = waker_ref(&wake);
++        self.poll_drain_tls_inner(&mut Context::from_waker(&waker))
++    }
++
++    // Internal helpers receive the dispatcher context and must not register it as a caller.
++    fn poll_drain_tls_inner(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+         // The peer no longer accepts TLS records once this direction is raw.
+         if let Some(prefix) = &mut self.raw_write_prefix {
+             while !prefix.is_empty() {
+@@ -330,6 +365,7 @@ impl<IO: AsyncStream> CryptoTlsStream<IO> {
+                 }
+                 prefix.advance(written);
+                 self.need_flush = true;
++                self.output_progress = true;
+             }
+         } else if !self.write_raw {
+             while self.session.wants_write() {
+@@ -340,6 +376,25 @@ impl<IO: AsyncStream> CryptoTlsStream<IO> {
+         }
+         Poll::Ready(Ok(()))
+     }
++
++    fn poll_flush_inner(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        if self.write_raw {
++            ready!(self.poll_drain_tls_inner(cx))?;
++            ready!(Pin::new(&mut self.io).poll_flush(cx))?;
++            self.output_progress |= self.need_flush || self.raw_write_prefix.is_some();
++            self.raw_write_prefix = None;
++            self.need_flush = false;
++            return Poll::Ready(Ok(()));
++        }
++        self.session.writer().flush()?;
++        ready!(self.poll_drain_tls_inner(cx))?;
++        if self.need_flush {
++            ready!(Pin::new(&mut self.io).poll_flush(cx))?;
++            self.output_progress = true;
++            self.need_flush = false;
++        }
++        Poll::Ready(Ok(()))
++    }
+ }
+ 
+ impl<IO: AsyncStream> AsyncRead for CryptoTlsStream<IO> {
+@@ -352,6 +407,11 @@ impl<IO: AsyncStream> AsyncRead for CryptoTlsStream<IO> {
+         if buf.remaining() == 0 || !this.state.readable() {
+             return Poll::Ready(Ok(()));
+         }
++        // Reads flush TLS responses too, without replacing a split writer's registration.
++        let wake = this.wake.clone();
++        wake.reader.register(cx.waker());
++        let waker = waker_ref(&wake);
++        let cx = &mut Context::from_waker(&waker);
+         if let TlsInput::Raw(pending) = &mut this.input {
+             if !pending.is_empty() {
+                 let len = buf.remaining().min(pending.len());
+@@ -381,12 +441,18 @@ impl<IO: AsyncStream> AsyncRead for CryptoTlsStream<IO> {
+                 Err(error) => return Poll::Ready(Err(error)),
+             }
+             // Service post-handshake responses without blocking readable plaintext
+-            // on output backpressure. Both I/O directions register their wakers.
+-            if let Poll::Ready(Err(error)) = Pin::new(&mut *this).poll_flush(cx) {
++            // on output backpressure.
++            this.output_progress = false;
++            let flushed = this.poll_flush_inner(cx);
++            if this.output_progress || matches!(flushed, Poll::Ready(Err(_))) {
++                wake.writer.wake();
++            }
++            if let Poll::Ready(Err(error)) = flushed {
+                 return Poll::Ready(Err(error));
+             }
+-            if let Err(error) = ready!(this.poll_receive_tls(cx)) {
+-                let _ = this.poll_drain_tls(cx);
++            if let Err(error) = ready!(this.poll_receive_tls_inner(cx)) {
++                wake.writer.wake();
++                let _ = this.poll_drain_tls_inner(cx);
+                 return Poll::Ready(Err(error));
+             }
+         }
+@@ -399,6 +465,10 @@ impl<IO: AsyncStream> AsyncWrite for CryptoTlsStream<IO> {
+         cx: &mut Context<'_>,
+         buf: &[u8],
+     ) -> Poll<io::Result<usize>> {
++        let wake = self.wake.clone();
++        wake.writer.register(cx.waker());
++        let waker = waker_ref(&wake);
++        let cx = &mut Context::from_waker(&waker);
+         if !self.state.writeable() {
+             return Poll::Ready(Err(io::Error::new(
+                 io::ErrorKind::BrokenPipe,
+@@ -407,7 +477,7 @@ impl<IO: AsyncStream> AsyncWrite for CryptoTlsStream<IO> {
+         }
+         if self.write_raw {
+             if self.raw_write_prefix.is_some() {
+-                ready!(self.as_mut().poll_flush(cx))?;
++                ready!(self.poll_flush_inner(cx))?;
+             }
+             return Pin::new(&mut self.io).poll_write(cx, buf);
+         }
+@@ -415,7 +485,7 @@ impl<IO: AsyncStream> AsyncWrite for CryptoTlsStream<IO> {
+         let mut pos = 0;
+         while pos < buf.len() {
+             pos += self.session.writer().write(&buf[pos..])?;
+-            match self.poll_drain_tls(cx) {
++            match self.poll_drain_tls_inner(cx) {
+                 Poll::Ready(Ok(())) => {}
+                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                 Poll::Pending if pos == 0 => return Poll::Pending,
+@@ -430,6 +500,10 @@ impl<IO: AsyncStream> AsyncWrite for CryptoTlsStream<IO> {
+         cx: &mut Context<'_>,
+         bufs: &[io::IoSlice<'_>],
+     ) -> Poll<io::Result<usize>> {
++        let wake = self.wake.clone();
++        wake.writer.register(cx.waker());
++        let waker = waker_ref(&wake);
++        let cx = &mut Context::from_waker(&waker);
+         if !self.state.writeable() {
+             return Poll::Ready(Err(io::Error::new(
+                 io::ErrorKind::BrokenPipe,
+@@ -438,7 +512,7 @@ impl<IO: AsyncStream> AsyncWrite for CryptoTlsStream<IO> {
+         }
+         if self.write_raw {
+             if self.raw_write_prefix.is_some() {
+-                ready!(self.as_mut().poll_flush(cx))?;
++                ready!(self.poll_flush_inner(cx))?;
+             }
+             return Pin::new(&mut self.io).poll_write_vectored(cx, bufs);
+         }
+@@ -448,7 +522,7 @@ impl<IO: AsyncStream> AsyncWrite for CryptoTlsStream<IO> {
+ 
+         loop {
+             let written = self.session.writer().write_vectored(bufs)?;
+-            let pending = match self.poll_drain_tls(cx) {
++            let pending = match self.poll_drain_tls_inner(cx) {
+                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                 Poll::Ready(Ok(())) => false,
+                 Poll::Pending => true,
+@@ -471,33 +545,27 @@ impl<IO: AsyncStream> AsyncWrite for CryptoTlsStream<IO> {
+     }
+ 
+     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+-        if self.write_raw {
+-            ready!(self.poll_drain_tls(cx))?;
+-            ready!(Pin::new(&mut self.io).poll_flush(cx))?;
+-            self.raw_write_prefix = None;
+-            self.need_flush = false;
+-            return Poll::Ready(Ok(()));
+-        }
+-        self.session.writer().flush()?;
+-        ready!(self.poll_drain_tls(cx))?;
+-        if self.need_flush {
+-            ready!(Pin::new(&mut self.io).poll_flush(cx))?;
+-            self.need_flush = false;
+-        }
+-        Poll::Ready(Ok(()))
++        let wake = self.wake.clone();
++        wake.writer.register(cx.waker());
++        let waker = waker_ref(&wake);
++        self.poll_flush_inner(&mut Context::from_waker(&waker))
+     }
+ 
+     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let wake = self.wake.clone();
++        wake.writer.register(cx.waker());
++        let waker = waker_ref(&wake);
++        let cx = &mut Context::from_waker(&waker);
+         if !self.write_raw {
+             if self.state.writeable() {
+                 self.session.send_close_notify();
+                 self.state.shutdown_write();
+             }
+             // A failed ordinary TLS session still has output to send before writer.flush fails.
+-            ready!(self.poll_drain_tls(cx))?;
+-            ready!(self.as_mut().poll_flush(cx))?;
++            ready!(self.poll_drain_tls_inner(cx))?;
++            ready!(self.poll_flush_inner(cx))?;
+         } else {
+-            ready!(self.as_mut().poll_flush(cx))?;
++            ready!(self.poll_flush_inner(cx))?;
+             self.state.shutdown_write();
+         }
+         match Pin::new(&mut self.io).poll_shutdown(cx) {
+@@ -515,6 +583,10 @@ impl<IO: AsyncStream> AsyncPing for CryptoTlsStream<IO> {
+     }
+ 
+     fn poll_write_ping(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
++        let wake = self.wake.clone();
++        wake.writer.register(cx.waker());
++        let waker = waker_ref(&wake);
++        let cx = &mut Context::from_waker(&waker);
+         let written = ready!(Pin::new(&mut self.io).poll_write_ping(cx))?;
+         self.need_flush |= written;
+         Poll::Ready(Ok(written))
+@@ -540,488 +612,4 @@ impl<IO: AsyncStream> AsyncStream for CryptoTlsStream<IO> {
+ }
+ 
+ #[cfg(test)]
+-mod tests {
+-    use super::*;
+-    use futures::task::noop_waker_ref;
+-
+-    struct PendingWriteIo;
+-
+-    impl AsyncRead for PendingWriteIo {
+-        fn poll_read(
+-            self: Pin<&mut Self>,
+-            _cx: &mut Context<'_>,
+-            _buf: &mut ReadBuf<'_>,
+-        ) -> Poll<io::Result<()>> {
+-            Poll::Pending
+-        }
+-    }
+-
+-    impl AsyncWrite for PendingWriteIo {
+-        fn poll_write(
+-            self: Pin<&mut Self>,
+-            _cx: &mut Context<'_>,
+-            _buf: &[u8],
+-        ) -> Poll<io::Result<usize>> {
+-            Poll::Pending
+-        }
+-
+-        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+-            Poll::Ready(Ok(()))
+-        }
+-
+-        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+-            Poll::Ready(Ok(()))
+-        }
+-    }
+-
+-    impl AsyncPing for PendingWriteIo {
+-        fn supports_ping(&self) -> bool {
+-            false
+-        }
+-
+-        fn poll_write_ping(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
+-            Poll::Ready(Ok(false))
+-        }
+-    }
+-
+-    impl AsyncStream for PendingWriteIo {}
+-
+-    struct ZeroWriteIo;
+-
+-    impl AsyncRead for ZeroWriteIo {
+-        fn poll_read(
+-            self: Pin<&mut Self>,
+-            _cx: &mut Context<'_>,
+-            _buf: &mut ReadBuf<'_>,
+-        ) -> Poll<io::Result<()>> {
+-            Poll::Pending
+-        }
+-    }
+-
+-    impl AsyncWrite for ZeroWriteIo {
+-        fn poll_write(
+-            self: Pin<&mut Self>,
+-            _cx: &mut Context<'_>,
+-            _buf: &[u8],
+-        ) -> Poll<io::Result<usize>> {
+-            Poll::Ready(Ok(0))
+-        }
+-
+-        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+-            Poll::Ready(Ok(()))
+-        }
+-
+-        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+-            Poll::Ready(Ok(()))
+-        }
+-    }
+-
+-    impl AsyncPing for ZeroWriteIo {
+-        fn supports_ping(&self) -> bool {
+-            false
+-        }
+-
+-        fn poll_write_ping(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
+-            Poll::Ready(Ok(false))
+-        }
+-    }
+-
+-    impl AsyncStream for ZeroWriteIo {}
+-
+-    fn completed_reality_connection() -> TlsConnection {
+-        crate::reality::established_pair().1
+-    }
+-
+-    #[tokio::test]
+-    async fn reality_certificate_errors_match_across_read_modes() {
+-        use aws_lc_rs::agreement;
+-        use std::sync::Arc;
+-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+-
+-        let public_key = agreement::PrivateKey::from_private_key(&agreement::X25519, &[1; 32])
+-            .unwrap()
+-            .compute_public_key()
+-            .unwrap();
+-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+-        let server_config = Arc::new(
+-            rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+-                .with_no_client_auth()
+-                .with_single_cert(
+-                    vec![cert.cert.der().clone()],
+-                    rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
+-                        .into(),
+-                )
+-                .unwrap(),
+-        );
+-        for (mode, preread) in [
+-            (TlsReadMode::Stream, false),
+-            (TlsReadMode::PreserveRecords, false),
+-            (TlsReadMode::Stream, true),
+-        ] {
+-            let mut client = crate::reality::RealityClientConfig {
+-                mldsa65_verify: None,
+-                public_key: public_key.as_ref().try_into().unwrap(),
+-                short_id: [0; 8],
+-                server_name: "localhost".try_into().unwrap(),
+-                cipher_suites: Vec::new(),
+-            }
+-            .create_connection()
+-            .unwrap();
+-            let mut server =
+-                TlsConnection::new(rustls::ServerConnection::new(server_config.clone()).unwrap());
+-            let mut hello = Vec::new();
+-            client.write_tls(&mut hello).unwrap();
+-            server.feed(&hello).unwrap();
+-            let mut flight = Vec::new();
+-            server.write_tls(&mut flight).unwrap();
+-            let (io, mut peer) = tokio::io::duplex(65536);
+-            if !preread {
+-                peer.write_all(&flight).await.unwrap();
+-            }
+-            let error =
+-                CryptoTlsStream::handshake(io, client, mode, if preread { &flight } else { &[] })
+-                    .await
+-                    .err()
+-                    .expect("a real target certificate must not authenticate REALITY");
+-            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+-            assert!(
+-                error
+-                    .to_string()
+-                    .starts_with("reality client error processing new packets:")
+-            );
+-            let mut output = Vec::new();
+-            peer.read_to_end(&mut output).await.unwrap();
+-            // Record-preserving reads may send a compatibility CCS before the certificate arrives.
+-            assert!(
+-                output.is_empty() || output == [20, 3, 3, 0, 1, 1],
+-                "failed REALITY authentication must not send alerts: {output:?}"
+-            );
+-        }
+-    }
+-
+-    #[tokio::test]
+-    async fn reality_shutdown_preserves_buffered_data_before_close_notify() {
+-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+-
+-        let (client, server) = crate::reality::established_pair();
+-        let (io, peer) = tokio::io::duplex(16);
+-        let mut sender = CryptoTlsStream::new(io, client, None);
+-        let mut receiver = CryptoTlsStream::new(peer, server, None);
+-        let payload = vec![42; 40_000];
+-        sender.write_all(&payload).await.unwrap();
+-        assert!(sender.session.wants_write());
+-        let mut cx = Context::from_waker(noop_waker_ref());
+-        assert!(Pin::new(&mut sender).poll_shutdown(&mut cx).is_pending());
+-
+-        let mut received = Vec::new();
+-        let (shutdown, read) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+-            tokio::join!(sender.shutdown(), receiver.read_to_end(&mut received))
+-        })
+-        .await
+-        .unwrap();
+-        shutdown.unwrap();
+-        read.unwrap();
+-        assert_eq!(received, payload);
+-    }
+-
+-    #[cfg(target_os = "linux")]
+-    #[tokio::test]
+-    async fn raw_tcp_capability_requires_drained_io_and_open_directions() {
+-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+-        use tokio::net::{TcpListener, TcpStream};
+-
+-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+-        let (socket, peer) = tokio::join!(
+-            TcpStream::connect(listener.local_addr().unwrap()),
+-            listener.accept()
+-        );
+-        let _peer = peer.unwrap();
+-        let session = completed_reality_connection();
+-        let mut stream = CryptoTlsStream::new(socket.unwrap(), session, Some(TlsDeframer::new()));
+-        assert!(stream.plain_tcp().is_none());
+-        stream.start_raw_read().unwrap();
+-        assert!(stream.plain_tcp().is_none());
+-        stream.start_raw_write(b"").unwrap();
+-        assert!(stream.plain_tcp().is_none());
+-        stream.flush().await.unwrap();
+-        assert!(stream.plain_tcp().is_some());
+-
+-        stream.input = TlsInput::Raw(Bytes::from_static(b"transport tail"));
+-        assert!(stream.plain_tcp().is_none());
+-        let mut tail = [0; 14];
+-        stream.read_exact(&mut tail[..1]).await.unwrap();
+-        assert!(stream.plain_tcp().is_none());
+-        stream.read_exact(&mut tail[1..]).await.unwrap();
+-        assert_eq!(&tail, b"transport tail");
+-        assert!(stream.plain_tcp().is_some());
+-
+-        stream.need_flush = true;
+-        assert!(stream.plain_tcp().is_none());
+-        stream.flush().await.unwrap();
+-        // TLS responses queued after DIRECT must not be sent on the raw wire.
+-        stream.session.send_close_notify();
+-        assert!(stream.plain_tcp().is_some());
+-
+-        for state in [
+-            TlsState::ReadShutdown,
+-            TlsState::WriteShutdown,
+-            TlsState::FullyShutdown,
+-        ] {
+-            stream.state = state;
+-            assert!(stream.plain_tcp().is_none());
+-        }
+-    }
+-
+-    fn ordinary_connections() -> (TlsConnection, TlsConnection) {
+-        use std::sync::Arc;
+-
+-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+-        let mut roots = rustls::RootCertStore::empty();
+-        roots.add(cert.cert.der().clone()).unwrap();
+-        let server_config = rustls::ServerConfig::builder()
+-            .with_no_client_auth()
+-            .with_single_cert(
+-                vec![cert.cert.der().clone()],
+-                rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
+-                    .into(),
+-            )
+-            .unwrap();
+-        let client_config = rustls::ClientConfig::builder()
+-            .with_root_certificates(roots)
+-            .with_no_client_auth();
+-        let server =
+-            TlsConnection::new(rustls::ServerConnection::new(Arc::new(server_config)).unwrap());
+-        let client = TlsConnection::new(
+-            rustls::ClientConnection::new(Arc::new(client_config), "localhost".try_into().unwrap())
+-                .unwrap(),
+-        );
+-        (client, server)
+-    }
+-
+-    #[tokio::test]
+-    async fn ordinary_tls_shutdown_drains_data_and_fatal_alert_after_backpressure() {
+-        use std::io::Read;
+-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+-
+-        for fail_server in [false, true] {
+-            let (mut client, mut server) = ordinary_connections();
+-            for _ in 0..8 {
+-                let mut wire = Vec::new();
+-                client.write_tls(&mut wire).unwrap();
+-                server.feed(&wire).unwrap();
+-                wire.clear();
+-                server.write_tls(&mut wire).unwrap();
+-                client.feed(&wire).unwrap();
+-                if !client.is_handshaking() && !server.is_handshaking() && !client.wants_write() {
+-                    break;
+-                }
+-            }
+-            assert!(!client.is_handshaking() && !server.is_handshaking());
+-            assert!(!client.wants_write() && !server.wants_write());
+-            let (sender, mut receiver) = if fail_server {
+-                (server, client)
+-            } else {
+-                (client, server)
+-            };
+-            let (io, mut peer) = tokio::io::duplex(16);
+-            let mut stream = CryptoTlsStream::new(io, sender, None);
+-            let payload = [42; 1000];
+-            stream.write_all(&payload).await.unwrap();
+-            assert!(stream.session.wants_write());
+-            peer.write_all(&[23, 3, 3, 0, 1, 0]).await.unwrap();
+-            assert_eq!(
+-                stream.read(&mut [0]).await.unwrap_err().kind(),
+-                io::ErrorKind::InvalidData
+-            );
+-            assert!(stream.session.wants_write());
+-
+-            let mut wire = Vec::new();
+-            let (shutdown, read) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+-                tokio::join!(
+-                    async move {
+-                        let result = stream.shutdown().await;
+-                        drop(stream);
+-                        result
+-                    },
+-                    peer.read_to_end(&mut wire)
+-                )
+-            })
+-            .await
+-            .unwrap();
+-            assert_eq!(shutdown.unwrap_err().kind(), io::ErrorKind::InvalidData);
+-            read.unwrap();
+-            let error = receiver.feed(&wire).unwrap_err();
+-            assert!(error.to_string().contains("BadRecordMac"), "{error}");
+-            let mut received = [0; 1000];
+-            receiver.reader().read_exact(&mut received).unwrap();
+-            assert_eq!(received, payload);
+-        }
+-    }
+-
+-    #[tokio::test]
+-    async fn vectored_tls_roundtrip_with_partial_transport_writes() {
+-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+-
+-        let (client, server) = ordinary_connections();
+-        let (client_io, server_io) = tokio::io::duplex(256);
+-        let peer = tokio::spawn(async move {
+-            let mut stream =
+-                CryptoTlsStream::handshake(server_io, server, TlsReadMode::Stream, &[])
+-                    .await
+-                    .unwrap();
+-            let mut received = Vec::new();
+-            stream.read_to_end(&mut received).await.unwrap();
+-            received
+-        });
+-        let mut stream = CryptoTlsStream::handshake(client_io, client, TlsReadMode::Stream, &[])
+-            .await
+-            .unwrap();
+-        assert!(stream.is_write_vectored());
+-        assert_eq!(
+-            stream
+-                .write_vectored(&[io::IoSlice::new(b"")])
+-                .await
+-                .unwrap(),
+-            0
+-        );
+-        let payload: Vec<u8> = (0..70000).map(|i| (i ^ (i >> 8)) as u8).collect();
+-        let mut slices = [
+-            io::IoSlice::new(b""),
+-            io::IoSlice::new(&payload[..9]),
+-            io::IoSlice::new(&payload[9..40000]),
+-            io::IoSlice::new(&payload[40000..]),
+-        ];
+-        let mut remaining = &mut slices[..];
+-        while !remaining.is_empty() {
+-            let written = stream.write_vectored(remaining).await.unwrap();
+-            assert!(written > 0);
+-            io::IoSlice::advance_slices(&mut remaining, written);
+-        }
+-        stream.shutdown().await.unwrap();
+-        assert_eq!(peer.await.unwrap(), payload);
+-        assert_eq!(
+-            stream.write_vectored(&slices).await.unwrap_err().kind(),
+-            io::ErrorKind::BrokenPipe
+-        );
+-    }
+-
+-    #[test]
+-    fn vectored_reality_fallback_accounts_for_accepted_plaintext_under_backpressure() {
+-        let mut stream = CryptoTlsStream::new(PendingWriteIo, completed_reality_connection(), None);
+-        assert!(!stream.is_write_vectored());
+-        let mut cx = Context::from_waker(noop_waker_ref());
+-        let data = [7; 16384];
+-        let slices = [
+-            io::IoSlice::new(b""),
+-            io::IoSlice::new(&data),
+-            io::IoSlice::new(&data),
+-        ];
+-        let mut accepted = 0;
+-        let mut blocked = false;
+-        for _ in 0..16 {
+-            match Pin::new(&mut stream).poll_write_vectored(&mut cx, &slices) {
+-                Poll::Ready(Ok(n)) => {
+-                    assert!(n > 0);
+-                    accepted += n;
+-                }
+-                Poll::Pending => {
+-                    blocked = true;
+-                    break;
+-                }
+-                Poll::Ready(Err(error)) => panic!("unexpected error: {error}"),
+-            }
+-        }
+-        assert!(blocked);
+-        assert!(accepted > 0 && accepted <= 65536);
+-    }
+-
+-    #[tokio::test]
+-    async fn raw_vectors_follow_the_entire_encrypted_prefix() {
+-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+-
+-        let (io, mut peer) = tokio::io::duplex(8);
+-        let mut stream = CryptoTlsStream::new(io, completed_reality_connection(), None);
+-        stream.start_raw_write(b"last encrypted bytes").unwrap();
+-        let mut expected = stream.raw_write_prefix.as_ref().unwrap().to_vec();
+-        expected.extend_from_slice(b"raw bytes");
+-        let mut received = vec![0; expected.len()];
+-        let slices = [io::IoSlice::new(b"raw "), io::IoSlice::new(b"bytes")];
+-        let mut cx = Context::from_waker(noop_waker_ref());
+-        assert!(
+-            Pin::new(&mut stream)
+-                .poll_write_vectored(&mut cx, &slices)
+-                .is_pending()
+-        );
+-        assert!(stream.is_write_vectored());
+-        let send = async {
+-            let mut slices = slices;
+-            let mut remaining = &mut slices[..];
+-            while !remaining.is_empty() {
+-                let n = stream.write_vectored(remaining).await.unwrap();
+-                assert!(n > 0);
+-                io::IoSlice::advance_slices(&mut remaining, n);
+-            }
+-            stream.flush().await.unwrap();
+-        };
+-        let ((), read) = tokio::join!(send, peer.read_exact(&mut received));
+-        read.unwrap();
+-        assert_eq!(received, expected);
+-    }
+-
+-    #[tokio::test]
+-    async fn ordinary_preread_returns_to_backend_reads_at_a_record_boundary() {
+-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+-
+-        let payload = vec![42; 40_000];
+-        for split in [0, 1, 4, 5, 10, 20_000, usize::MAX] {
+-            let (mut sender, receiver) = crate::reality::established_pair();
+-            sender.writer().write_all(&payload).unwrap();
+-            let mut ciphertext = Vec::new();
+-            sender.write_tls(&mut ciphertext).unwrap();
+-            let split = split.min(ciphertext.len());
+-            let (io, mut peer) = tokio::io::duplex(65536);
+-            peer.write_all(&ciphertext[split..]).await.unwrap();
+-            let mut stream =
+-                CryptoTlsStream::handshake(io, receiver, TlsReadMode::Stream, &ciphertext[..split])
+-                    .await
+-                    .unwrap();
+-            let mut received = vec![0; payload.len()];
+-            stream.read_exact(&mut received).await.unwrap();
+-            assert_eq!(received, payload);
+-            assert!(matches!(stream.input, TlsInput::Stream));
+-        }
+-    }
+-
+-    #[test]
+-    fn reality_stream_stops_accepting_plaintext_when_tls_output_is_blocked() {
+-        let mut stream = CryptoTlsStream::new(PendingWriteIo, completed_reality_connection(), None);
+-        let mut cx = Context::from_waker(noop_waker_ref());
+-        let data = [0u8; 16 * 1024];
+-        let mut accepted = 0;
+-
+-        for _ in 0..16 {
+-            match Pin::new(&mut stream).poll_write(&mut cx, &data) {
+-                Poll::Ready(Ok(written)) => accepted += written,
+-                Poll::Pending => break,
+-                Poll::Ready(Err(error)) => panic!("unexpected write error: {error}"),
+-            }
+-        }
+-
+-        assert!(
+-            accepted <= 64 * 1024,
+-            "blocked REALITY stream accepted {accepted} plaintext bytes"
+-        );
+-    }
+-
+-    #[test]
+-    fn reality_stream_rejects_write_zero_without_waiting_for_a_wake() {
+-        let mut stream = CryptoTlsStream::new(ZeroWriteIo, completed_reality_connection(), None);
+-        let mut cx = Context::from_waker(noop_waker_ref());
+-
+-        let result = Pin::new(&mut stream).poll_write(&mut cx, &[0; 1024]);
+-        assert!(matches!(
+-            result,
+-            Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::WriteZero
+-        ));
+-    }
+-}
++mod tests;
+diff --git a/src/crypto/crypto_tls_stream/tests.rs b/src/crypto/crypto_tls_stream/tests.rs
+new file mode 100644
+index 0000000..4d2e73d
+--- /dev/null
++++ b/src/crypto/crypto_tls_stream/tests.rs
+@@ -0,0 +1,843 @@
++use super::*;
++use futures::task::noop_waker_ref;
++use std::sync::{
++    Arc, Mutex,
++    atomic::{AtomicUsize, Ordering},
++};
++use std::task::{Wake, Waker};
++
++#[derive(Default)]
++struct WriteReadiness {
++    allowance: usize,
++    waker: Option<Waker>,
++    input: Vec<u8>,
++    flush_blocked: bool,
++    shutdown_blocked: bool,
++}
++
++struct SingleWriteWaiter(Arc<Mutex<WriteReadiness>>);
++
++impl AsyncRead for SingleWriteWaiter {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        _: &mut Context<'_>,
++        buf: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        let mut state = self.0.lock().unwrap();
++        if state.input.is_empty() {
++            return Poll::Pending;
++        }
++        let n = buf.remaining().min(state.input.len());
++        buf.put_slice(&state.input[..n]);
++        state.input.drain(..n);
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncWrite for SingleWriteWaiter {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        cx: &mut Context<'_>,
++        buf: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        let mut state = self.0.lock().unwrap();
++        if state.allowance == 0 {
++            state.waker = Some(cx.waker().clone());
++            return Poll::Pending;
++        }
++        let n = state.allowance.min(buf.len());
++        state.allowance -= n;
++        Poll::Ready(Ok(n))
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let mut state = self.0.lock().unwrap();
++        if state.flush_blocked {
++            state.waker = Some(cx.waker().clone());
++            return Poll::Pending;
++        }
++        Poll::Ready(Ok(()))
++    }
++
++    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        let mut state = self.0.lock().unwrap();
++        if state.shutdown_blocked {
++            state.waker = Some(cx.waker().clone());
++            return Poll::Pending;
++        }
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncPing for SingleWriteWaiter {
++    fn supports_ping(&self) -> bool {
++        true
++    }
++
++    fn poll_write_ping(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
++        self.poll_write(cx, b"ping")
++            .map(|result| result.map(|_| true))
++    }
++}
++
++impl AsyncStream for SingleWriteWaiter {}
++
++#[derive(Default)]
++struct WakeCount(AtomicUsize);
++
++impl Wake for WakeCount {
++    fn wake(self: Arc<Self>) {
++        self.0.fetch_add(1, Ordering::Relaxed);
++    }
++}
++
++#[derive(Clone, Copy, Debug)]
++enum WriteOperation {
++    Write,
++    WriteVectored,
++    Flush,
++    Shutdown,
++    DrainTls,
++    Ping,
++}
++
++impl WriteOperation {
++    fn poll<IO: AsyncStream>(
++        self,
++        stream: &mut CryptoTlsStream<IO>,
++        cx: &mut Context<'_>,
++        data: &[u8],
++    ) -> Poll<io::Result<()>> {
++        match self {
++            Self::Write => Pin::new(stream).poll_write(cx, data).map(|r| r.map(|_| ())),
++            Self::WriteVectored => Pin::new(stream)
++                .poll_write_vectored(cx, &[io::IoSlice::new(data)])
++                .map(|r| r.map(|_| ())),
++            Self::Flush => Pin::new(stream).poll_flush(cx),
++            Self::Shutdown => Pin::new(stream).poll_shutdown(cx),
++            Self::DrainTls => stream.poll_drain_tls(cx),
++            Self::Ping => Pin::new(stream).poll_write_ping(cx).map(|r| r.map(|_| ())),
++        }
++    }
++}
++
++fn saturate_tls_output<IO: AsyncStream>(stream: &mut CryptoTlsStream<IO>, cx: &mut Context<'_>) {
++    for _ in 0..32 {
++        if Pin::new(&mut *stream)
++            .poll_write(cx, &[7; 16384])
++            .is_pending()
++        {
++            return;
++        }
++    }
++    panic!("TLS output did not reach backpressure");
++}
++
++#[test]
++fn split_tls_tasks_keep_write_readiness_through_read_flushes() {
++    for reality in [false, true] {
++        for synchronous_progress in [false, true] {
++            for operation in [
++                WriteOperation::Write,
++                WriteOperation::WriteVectored,
++                WriteOperation::Flush,
++                WriteOperation::Shutdown,
++                WriteOperation::DrainTls,
++            ] {
++                let state = Arc::new(Mutex::new(WriteReadiness::default()));
++                let io = SingleWriteWaiter(state.clone());
++                let session = if reality {
++                    completed_reality_connection()
++                } else {
++                    completed_ordinary_connections().0
++                };
++                let mut stream = CryptoTlsStream::new(io, session, None);
++                let writer = Arc::new(WakeCount::default());
++                let reader = Arc::new(WakeCount::default());
++                let (write_waker, read_waker) = (writer.clone().into(), reader.clone().into());
++                let mut write_cx = Context::from_waker(&write_waker);
++                let mut read_cx = Context::from_waker(&read_waker);
++                saturate_tls_output(&mut stream, &mut write_cx);
++                assert!(
++                    operation
++                        .poll(&mut stream, &mut write_cx, &[7; 16384])
++                        .is_pending(),
++                    "expected {operation:?} to block"
++                );
++                assert_eq!(writer.0.load(Ordering::Relaxed), 0);
++                if synchronous_progress {
++                    state.lock().unwrap().allowance = 1;
++                }
++                assert!(
++                    Pin::new(&mut stream)
++                        .poll_read(&mut read_cx, &mut ReadBuf::new(&mut [0]))
++                        .is_pending()
++                );
++                if !synchronous_progress {
++                    assert_eq!(writer.0.load(Ordering::Relaxed), 0);
++                    // Cancel the reader: only the transport readiness notification remains.
++                    let readiness = state.lock().unwrap().waker.take().unwrap();
++                    readiness.wake();
++                    assert!(reader.0.load(Ordering::Relaxed) > 0);
++                }
++                assert!(
++                    writer.0.load(Ordering::Relaxed) > 0,
++                    "lost writer: reality={reality}, synchronous={synchronous_progress}, operation={operation:?}"
++                );
++                state.lock().unwrap().allowance = usize::MAX;
++                assert!(matches!(
++                    Pin::new(&mut stream).poll_flush(&mut write_cx),
++                    Poll::Ready(Ok(()))
++                ));
++            }
++        }
++    }
++}
++
++#[test]
++fn split_tls_tasks_keep_raw_and_ping_write_readiness() {
++    for raw_read in [false, true] {
++        for operation in [
++            WriteOperation::Write,
++            WriteOperation::WriteVectored,
++            WriteOperation::Flush,
++            WriteOperation::Shutdown,
++            WriteOperation::Ping,
++        ] {
++            let state = Arc::new(Mutex::new(WriteReadiness::default()));
++            let mut stream = CryptoTlsStream::new(
++                SingleWriteWaiter(state.clone()),
++                completed_reality_connection(),
++                Some(TlsDeframer::new()),
++            );
++            stream.start_raw_write(b"last TLS bytes").unwrap();
++            if raw_read {
++                stream.start_raw_read().unwrap();
++            }
++            let writer = Arc::new(WakeCount::default());
++            let write_waker = writer.clone().into();
++            let mut write_cx = Context::from_waker(&write_waker);
++            let mut read_cx = Context::from_waker(noop_waker_ref());
++            assert!(
++                operation
++                    .poll(&mut stream, &mut write_cx, b"raw")
++                    .is_pending(),
++                "expected {operation:?} to block"
++            );
++            assert!(
++                Pin::new(&mut stream)
++                    .poll_read(&mut read_cx, &mut ReadBuf::new(&mut [0]))
++                    .is_pending()
++            );
++            state.lock().unwrap().waker.take().unwrap().wake();
++            assert!(writer.0.load(Ordering::Relaxed) > 0);
++        }
++    }
++}
++
++#[test]
++fn tls_receive_errors_wake_writers_without_outbound_progress() {
++    for session in [
++        completed_ordinary_connections().0,
++        completed_reality_connection(),
++    ] {
++        let state = Arc::new(Mutex::new(WriteReadiness::default()));
++        let mut stream = CryptoTlsStream::new(SingleWriteWaiter(state.clone()), session, None);
++        let writer = Arc::new(WakeCount::default());
++        let waker = writer.clone().into();
++        let mut write_cx = Context::from_waker(&waker);
++        let mut read_cx = Context::from_waker(noop_waker_ref());
++        saturate_tls_output(&mut stream, &mut write_cx);
++        assert_eq!(writer.0.load(Ordering::Relaxed), 0);
++        state.lock().unwrap().input = vec![23, 3, 3, 0, 1, 0];
++        assert!(
++            matches!(Pin::new(&mut stream).poll_read(&mut read_cx, &mut ReadBuf::new(&mut [0])),
++            Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::InvalidData)
++        );
++        assert!(writer.0.load(Ordering::Relaxed) > 0);
++        assert!(matches!(
++            Pin::new(&mut stream).poll_write(&mut write_cx, b"next"),
++            Poll::Ready(Err(_))
++        ));
++        assert_eq!(state.lock().unwrap().allowance, 0);
++    }
++}
++
++#[test]
++fn tls_writer_progress_does_not_wake_itself() {
++    for raw in [false, true] {
++        let state = Arc::new(Mutex::new(WriteReadiness {
++            allowance: usize::MAX,
++            ..Default::default()
++        }));
++        let mut stream = CryptoTlsStream::new(
++            SingleWriteWaiter(state),
++            completed_ordinary_connections().0,
++            None,
++        );
++        if raw {
++            stream.start_raw_write(b"last TLS bytes").unwrap();
++        }
++        let writer = Arc::new(WakeCount::default());
++        let waker = writer.clone().into();
++        let mut cx = Context::from_waker(&waker);
++        assert!(matches!(
++            Pin::new(&mut stream).poll_write(&mut cx, b"data"),
++            Poll::Ready(Ok(4))
++        ));
++        assert!(matches!(
++            Pin::new(&mut stream).poll_write_vectored(&mut cx, &[io::IoSlice::new(b"more")]),
++            Poll::Ready(Ok(4))
++        ));
++        assert!(matches!(
++            Pin::new(&mut stream).poll_flush(&mut cx),
++            Poll::Ready(Ok(()))
++        ));
++        assert!(matches!(
++            Pin::new(&mut stream).poll_shutdown(&mut cx),
++            Poll::Ready(Ok(()))
++        ));
++        assert_eq!(writer.0.load(Ordering::Relaxed), 0);
++    }
++}
++
++#[test]
++fn tls_control_readiness_survives_reader_cancellation() {
++    for operation in [WriteOperation::Flush, WriteOperation::Shutdown] {
++        let state = Arc::new(Mutex::new(WriteReadiness {
++            allowance: usize::MAX,
++            flush_blocked: matches!(operation, WriteOperation::Flush),
++            shutdown_blocked: matches!(operation, WriteOperation::Shutdown),
++            ..Default::default()
++        }));
++        let mut stream = CryptoTlsStream::new(
++            SingleWriteWaiter(state.clone()),
++            completed_ordinary_connections().0,
++            None,
++        );
++        let writer = Arc::new(WakeCount::default());
++        let waker = writer.clone().into();
++        let mut write_cx = Context::from_waker(&waker);
++        let mut read_cx = Context::from_waker(noop_waker_ref());
++        assert!(matches!(
++            Pin::new(&mut stream).poll_write(&mut write_cx, b"data"),
++            Poll::Ready(Ok(4))
++        ));
++        assert!(operation.poll(&mut stream, &mut write_cx, &[]).is_pending());
++        assert!(
++            Pin::new(&mut stream)
++                .poll_read(&mut read_cx, &mut ReadBuf::new(&mut [0]))
++                .is_pending()
++        );
++        assert_eq!(writer.0.load(Ordering::Relaxed), 0);
++        let readiness = {
++            let mut state = state.lock().unwrap();
++            state.flush_blocked = false;
++            state.shutdown_blocked = false;
++            state.waker.take().unwrap()
++        };
++        readiness.wake();
++        assert!(writer.0.load(Ordering::Relaxed) > 0);
++        assert!(matches!(
++            operation.poll(&mut stream, &mut write_cx, &[]),
++            Poll::Ready(Ok(()))
++        ));
++    }
++}
++
++struct PendingWriteIo;
++
++impl AsyncRead for PendingWriteIo {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        _cx: &mut Context<'_>,
++        _buf: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        Poll::Pending
++    }
++}
++
++impl AsyncWrite for PendingWriteIo {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        _cx: &mut Context<'_>,
++        _buf: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        Poll::Pending
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++
++    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncPing for PendingWriteIo {
++    fn supports_ping(&self) -> bool {
++        false
++    }
++
++    fn poll_write_ping(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
++        Poll::Ready(Ok(false))
++    }
++}
++
++impl AsyncStream for PendingWriteIo {}
++
++struct ZeroWriteIo;
++
++impl AsyncRead for ZeroWriteIo {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        _cx: &mut Context<'_>,
++        _buf: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        Poll::Pending
++    }
++}
++
++impl AsyncWrite for ZeroWriteIo {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        _cx: &mut Context<'_>,
++        _buf: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        Poll::Ready(Ok(0))
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++
++    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncPing for ZeroWriteIo {
++    fn supports_ping(&self) -> bool {
++        false
++    }
++
++    fn poll_write_ping(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
++        Poll::Ready(Ok(false))
++    }
++}
++
++impl AsyncStream for ZeroWriteIo {}
++
++fn completed_reality_connection() -> TlsConnection {
++    crate::reality::established_pair().1
++}
++
++#[tokio::test]
++async fn reality_certificate_errors_match_across_read_modes() {
++    use aws_lc_rs::agreement;
++    use std::sync::Arc;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    let public_key = agreement::PrivateKey::from_private_key(&agreement::X25519, &[1; 32])
++        .unwrap()
++        .compute_public_key()
++        .unwrap();
++    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
++    let server_config = Arc::new(
++        rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
++            .with_no_client_auth()
++            .with_single_cert(
++                vec![cert.cert.der().clone()],
++                rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
++                    .into(),
++            )
++            .unwrap(),
++    );
++    for (mode, preread) in [
++        (TlsReadMode::Stream, false),
++        (TlsReadMode::PreserveRecords, false),
++        (TlsReadMode::Stream, true),
++    ] {
++        let mut client = crate::reality::RealityClientConfig {
++            mldsa65_verify: None,
++            public_key: public_key.as_ref().try_into().unwrap(),
++            short_id: [0; 8],
++            server_name: "localhost".try_into().unwrap(),
++            cipher_suites: Vec::new(),
++        }
++        .create_connection()
++        .unwrap();
++        let mut server =
++            TlsConnection::new(rustls::ServerConnection::new(server_config.clone()).unwrap());
++        let mut hello = Vec::new();
++        client.write_tls(&mut hello).unwrap();
++        server.feed(&hello).unwrap();
++        let mut flight = Vec::new();
++        server.write_tls(&mut flight).unwrap();
++        let (io, mut peer) = tokio::io::duplex(65536);
++        if !preread {
++            peer.write_all(&flight).await.unwrap();
++        }
++        let error =
++            CryptoTlsStream::handshake(io, client, mode, if preread { &flight } else { &[] })
++                .await
++                .err()
++                .expect("a real target certificate must not authenticate REALITY");
++        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
++        assert!(
++            error
++                .to_string()
++                .starts_with("reality client error processing new packets:")
++        );
++        let mut output = Vec::new();
++        peer.read_to_end(&mut output).await.unwrap();
++        // Record-preserving reads may send a compatibility CCS before the certificate arrives.
++        assert!(
++            output.is_empty() || output == [20, 3, 3, 0, 1, 1],
++            "failed REALITY authentication must not send alerts: {output:?}"
++        );
++    }
++}
++
++#[tokio::test]
++async fn reality_shutdown_preserves_buffered_data_before_close_notify() {
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    let (client, server) = crate::reality::established_pair();
++    let (io, peer) = tokio::io::duplex(16);
++    let mut sender = CryptoTlsStream::new(io, client, None);
++    let mut receiver = CryptoTlsStream::new(peer, server, None);
++    let payload = vec![42; 40_000];
++    sender.write_all(&payload).await.unwrap();
++    assert!(sender.session.wants_write());
++    let mut cx = Context::from_waker(noop_waker_ref());
++    assert!(Pin::new(&mut sender).poll_shutdown(&mut cx).is_pending());
++
++    let mut received = Vec::new();
++    let (shutdown, read) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
++        tokio::join!(sender.shutdown(), receiver.read_to_end(&mut received))
++    })
++    .await
++    .unwrap();
++    shutdown.unwrap();
++    read.unwrap();
++    assert_eq!(received, payload);
++}
++
++#[cfg(target_os = "linux")]
++#[tokio::test]
++async fn raw_tcp_capability_requires_drained_io_and_open_directions() {
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++    use tokio::net::{TcpListener, TcpStream};
++
++    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let (socket, peer) = tokio::join!(
++        TcpStream::connect(listener.local_addr().unwrap()),
++        listener.accept()
++    );
++    let _peer = peer.unwrap();
++    let session = completed_reality_connection();
++    let mut stream = CryptoTlsStream::new(socket.unwrap(), session, Some(TlsDeframer::new()));
++    assert!(stream.plain_tcp().is_none());
++    stream.start_raw_read().unwrap();
++    assert!(stream.plain_tcp().is_none());
++    stream.start_raw_write(b"").unwrap();
++    assert!(stream.plain_tcp().is_none());
++    stream.flush().await.unwrap();
++    assert!(stream.plain_tcp().is_some());
++
++    stream.input = TlsInput::Raw(Bytes::from_static(b"transport tail"));
++    assert!(stream.plain_tcp().is_none());
++    let mut tail = [0; 14];
++    stream.read_exact(&mut tail[..1]).await.unwrap();
++    assert!(stream.plain_tcp().is_none());
++    stream.read_exact(&mut tail[1..]).await.unwrap();
++    assert_eq!(&tail, b"transport tail");
++    assert!(stream.plain_tcp().is_some());
++
++    stream.need_flush = true;
++    assert!(stream.plain_tcp().is_none());
++    stream.flush().await.unwrap();
++    // TLS responses queued after DIRECT must not be sent on the raw wire.
++    stream.session.send_close_notify();
++    assert!(stream.plain_tcp().is_some());
++
++    for state in [
++        TlsState::ReadShutdown,
++        TlsState::WriteShutdown,
++        TlsState::FullyShutdown,
++    ] {
++        stream.state = state;
++        assert!(stream.plain_tcp().is_none());
++    }
++}
++
++fn ordinary_connections() -> (TlsConnection, TlsConnection) {
++    use std::sync::Arc;
++
++    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
++    let mut roots = rustls::RootCertStore::empty();
++    roots.add(cert.cert.der().clone()).unwrap();
++    let server_config = rustls::ServerConfig::builder()
++        .with_no_client_auth()
++        .with_single_cert(
++            vec![cert.cert.der().clone()],
++            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
++        )
++        .unwrap();
++    let client_config = rustls::ClientConfig::builder()
++        .with_root_certificates(roots)
++        .with_no_client_auth();
++    let server =
++        TlsConnection::new(rustls::ServerConnection::new(Arc::new(server_config)).unwrap());
++    let client = TlsConnection::new(
++        rustls::ClientConnection::new(Arc::new(client_config), "localhost".try_into().unwrap())
++            .unwrap(),
++    );
++    (client, server)
++}
++
++fn completed_ordinary_connections() -> (TlsConnection, TlsConnection) {
++    let (mut client, mut server) = ordinary_connections();
++    for _ in 0..8 {
++        let mut wire = Vec::new();
++        client.write_tls(&mut wire).unwrap();
++        server.feed(&wire).unwrap();
++        wire.clear();
++        server.write_tls(&mut wire).unwrap();
++        client.feed(&wire).unwrap();
++        if !client.is_handshaking() && !server.is_handshaking() && !client.wants_write() {
++            break;
++        }
++    }
++    assert!(!client.is_handshaking() && !server.is_handshaking());
++    assert!(!client.wants_write() && !server.wants_write());
++    (client, server)
++}
++
++#[tokio::test]
++async fn ordinary_tls_shutdown_drains_data_and_fatal_alert_after_backpressure() {
++    use std::io::Read;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    for fail_server in [false, true] {
++        let (mut client, mut server) = ordinary_connections();
++        for _ in 0..8 {
++            let mut wire = Vec::new();
++            client.write_tls(&mut wire).unwrap();
++            server.feed(&wire).unwrap();
++            wire.clear();
++            server.write_tls(&mut wire).unwrap();
++            client.feed(&wire).unwrap();
++            if !client.is_handshaking() && !server.is_handshaking() && !client.wants_write() {
++                break;
++            }
++        }
++        assert!(!client.is_handshaking() && !server.is_handshaking());
++        assert!(!client.wants_write() && !server.wants_write());
++        let (sender, mut receiver) = if fail_server {
++            (server, client)
++        } else {
++            (client, server)
++        };
++        let (io, mut peer) = tokio::io::duplex(16);
++        let mut stream = CryptoTlsStream::new(io, sender, None);
++        let payload = [42; 1000];
++        stream.write_all(&payload).await.unwrap();
++        assert!(stream.session.wants_write());
++        peer.write_all(&[23, 3, 3, 0, 1, 0]).await.unwrap();
++        assert_eq!(
++            stream.read(&mut [0]).await.unwrap_err().kind(),
++            io::ErrorKind::InvalidData
++        );
++        assert!(stream.session.wants_write());
++
++        let mut wire = Vec::new();
++        let (shutdown, read) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
++            tokio::join!(
++                async move {
++                    let result = stream.shutdown().await;
++                    drop(stream);
++                    result
++                },
++                peer.read_to_end(&mut wire)
++            )
++        })
++        .await
++        .unwrap();
++        assert_eq!(shutdown.unwrap_err().kind(), io::ErrorKind::InvalidData);
++        read.unwrap();
++        let error = receiver.feed(&wire).unwrap_err();
++        assert!(error.to_string().contains("BadRecordMac"), "{error}");
++        let mut received = [0; 1000];
++        receiver.reader().read_exact(&mut received).unwrap();
++        assert_eq!(received, payload);
++    }
++}
++
++#[tokio::test]
++async fn vectored_tls_roundtrip_with_partial_transport_writes() {
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    let (client, server) = ordinary_connections();
++    let (client_io, server_io) = tokio::io::duplex(256);
++    let peer = tokio::spawn(async move {
++        let mut stream = CryptoTlsStream::handshake(server_io, server, TlsReadMode::Stream, &[])
++            .await
++            .unwrap();
++        let mut received = Vec::new();
++        stream.read_to_end(&mut received).await.unwrap();
++        received
++    });
++    let mut stream = CryptoTlsStream::handshake(client_io, client, TlsReadMode::Stream, &[])
++        .await
++        .unwrap();
++    assert!(stream.is_write_vectored());
++    assert_eq!(
++        stream
++            .write_vectored(&[io::IoSlice::new(b"")])
++            .await
++            .unwrap(),
++        0
++    );
++    let payload: Vec<u8> = (0..70000).map(|i| (i ^ (i >> 8)) as u8).collect();
++    let mut slices = [
++        io::IoSlice::new(b""),
++        io::IoSlice::new(&payload[..9]),
++        io::IoSlice::new(&payload[9..40000]),
++        io::IoSlice::new(&payload[40000..]),
++    ];
++    let mut remaining = &mut slices[..];
++    while !remaining.is_empty() {
++        let written = stream.write_vectored(remaining).await.unwrap();
++        assert!(written > 0);
++        io::IoSlice::advance_slices(&mut remaining, written);
++    }
++    stream.shutdown().await.unwrap();
++    assert_eq!(peer.await.unwrap(), payload);
++    assert_eq!(
++        stream.write_vectored(&slices).await.unwrap_err().kind(),
++        io::ErrorKind::BrokenPipe
++    );
++}
++
++#[test]
++fn vectored_reality_fallback_accounts_for_accepted_plaintext_under_backpressure() {
++    let mut stream = CryptoTlsStream::new(PendingWriteIo, completed_reality_connection(), None);
++    assert!(!stream.is_write_vectored());
++    let mut cx = Context::from_waker(noop_waker_ref());
++    let data = [7; 16384];
++    let slices = [
++        io::IoSlice::new(b""),
++        io::IoSlice::new(&data),
++        io::IoSlice::new(&data),
++    ];
++    let mut accepted = 0;
++    let mut blocked = false;
++    for _ in 0..16 {
++        match Pin::new(&mut stream).poll_write_vectored(&mut cx, &slices) {
++            Poll::Ready(Ok(n)) => {
++                assert!(n > 0);
++                accepted += n;
++            }
++            Poll::Pending => {
++                blocked = true;
++                break;
++            }
++            Poll::Ready(Err(error)) => panic!("unexpected error: {error}"),
++        }
++    }
++    assert!(blocked);
++    assert!(accepted > 0 && accepted <= 65536);
++}
++
++#[tokio::test]
++async fn raw_vectors_follow_the_entire_encrypted_prefix() {
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    let (io, mut peer) = tokio::io::duplex(8);
++    let mut stream = CryptoTlsStream::new(io, completed_reality_connection(), None);
++    stream.start_raw_write(b"last encrypted bytes").unwrap();
++    let mut expected = stream.raw_write_prefix.as_ref().unwrap().to_vec();
++    expected.extend_from_slice(b"raw bytes");
++    let mut received = vec![0; expected.len()];
++    let slices = [io::IoSlice::new(b"raw "), io::IoSlice::new(b"bytes")];
++    let mut cx = Context::from_waker(noop_waker_ref());
++    assert!(
++        Pin::new(&mut stream)
++            .poll_write_vectored(&mut cx, &slices)
++            .is_pending()
++    );
++    assert!(stream.is_write_vectored());
++    let send = async {
++        let mut slices = slices;
++        let mut remaining = &mut slices[..];
++        while !remaining.is_empty() {
++            let n = stream.write_vectored(remaining).await.unwrap();
++            assert!(n > 0);
++            io::IoSlice::advance_slices(&mut remaining, n);
++        }
++        stream.flush().await.unwrap();
++    };
++    let ((), read) = tokio::join!(send, peer.read_exact(&mut received));
++    read.unwrap();
++    assert_eq!(received, expected);
++}
++
++#[tokio::test]
++async fn ordinary_preread_returns_to_backend_reads_at_a_record_boundary() {
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    let payload = vec![42; 40_000];
++    for split in [0, 1, 4, 5, 10, 20_000, usize::MAX] {
++        let (mut sender, receiver) = crate::reality::established_pair();
++        sender.writer().write_all(&payload).unwrap();
++        let mut ciphertext = Vec::new();
++        sender.write_tls(&mut ciphertext).unwrap();
++        let split = split.min(ciphertext.len());
++        let (io, mut peer) = tokio::io::duplex(65536);
++        peer.write_all(&ciphertext[split..]).await.unwrap();
++        let mut stream =
++            CryptoTlsStream::handshake(io, receiver, TlsReadMode::Stream, &ciphertext[..split])
++                .await
++                .unwrap();
++        let mut received = vec![0; payload.len()];
++        stream.read_exact(&mut received).await.unwrap();
++        assert_eq!(received, payload);
++        assert!(matches!(stream.input, TlsInput::Stream));
++    }
++}
++
++#[test]
++fn reality_stream_stops_accepting_plaintext_when_tls_output_is_blocked() {
++    let mut stream = CryptoTlsStream::new(PendingWriteIo, completed_reality_connection(), None);
++    let mut cx = Context::from_waker(noop_waker_ref());
++    let data = [0u8; 16 * 1024];
++    let mut accepted = 0;
++
++    for _ in 0..16 {
++        match Pin::new(&mut stream).poll_write(&mut cx, &data) {
++            Poll::Ready(Ok(written)) => accepted += written,
++            Poll::Pending => break,
++            Poll::Ready(Err(error)) => panic!("unexpected write error: {error}"),
++        }
++    }
++
++    assert!(
++        accepted <= 64 * 1024,
++        "blocked REALITY stream accepted {accepted} plaintext bytes"
++    );
++}
++
++#[test]
++fn reality_stream_rejects_write_zero_without_waiting_for_a_wake() {
++    let mut stream = CryptoTlsStream::new(ZeroWriteIo, completed_reality_connection(), None);
++    let mut cx = Context::from_waker(noop_waker_ref());
++
++    let result = Pin::new(&mut stream).poll_write(&mut cx, &[0; 1024]);
++    assert!(matches!(
++        result,
++        Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::WriteZero
++    ));
++}
+diff --git a/src/dns/exchange.rs b/src/dns/exchange.rs
+index f50c1c0..634366e 100644
+--- a/src/dns/exchange.rs
++++ b/src/dns/exchange.rs
+@@ -355,7 +355,7 @@ async fn send_message(
+     Ok(answer.into_message())
+ }
+ 
+-fn net_error(error: NetError) -> io::Error {
++pub(super) fn net_error(error: NetError) -> io::Error {
+     let kind = match &error {
+         NetError::Timeout => io::ErrorKind::TimedOut,
+         NetError::Io(error) => error.kind(),
+diff --git a/src/dns/hickory_resolver.rs b/src/dns/hickory_resolver.rs
+index f09474d..183795f 100644
+--- a/src/dns/hickory_resolver.rs
++++ b/src/dns/hickory_resolver.rs
+@@ -287,7 +287,7 @@ impl ShoesResolver for HickoryResolver {
+                     elapsed,
+                     e
+                 );
+-                std::io::Error::other(format!("DNS lookup failed: {e}"))
++                super::exchange::net_error(e)
+             })?;
+ 
+             let addrs: Vec<SocketAddr> = response
+@@ -331,6 +331,128 @@ impl ShoesResolver for HickoryResolver {
+ mod tests {
+     use super::*;
+ 
++    #[tokio::test]
++    async fn hostname_lookup_refreshes_only_transport_failures() {
++        use crate::resolver::{RefreshPolicy, RefreshingResolver, ResolverFactory};
++        use hickory_resolver::proto::{
++            op::{Message, ResponseCode},
++            rr::{RData, Record, rdata},
++        };
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++        #[derive(Clone, Copy)]
++        enum Failure {
++            Timeout,
++            NoConnections,
++            NxDomain,
++        }
++
++        let location = NetLocation::from_str("recovery.example.:443", None).unwrap();
++        let expected_addresses: [SocketAddr; 1] = ["198.51.100.7:443".parse().unwrap()];
++
++        for failure in [Failure::Timeout, Failure::NoConnections, Failure::NxDomain] {
++            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++            let address = listener.local_addr().unwrap();
++            let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
++                // Keeps the unanswered connection open so the lookup fails by timeout, not EOF.
++                let _unanswered_connection = if matches!(failure, Failure::Timeout) {
++                    let (mut stream, _) = listener.accept().await.unwrap();
++                    let length = stream.read_u16().await.unwrap();
++                    let mut bytes = vec![0; length as usize];
++                    stream.read_exact(&mut bytes).await.unwrap();
++                    Some(stream)
++                } else {
++                    None
++                };
++                let (mut stream, _) = listener.accept().await.unwrap();
++                let length = stream.read_u16().await.unwrap();
++                let mut bytes = vec![0; length as usize];
++                stream.read_exact(&mut bytes).await.unwrap();
++                let mut reply = Message::from_vec(&bytes).unwrap().into_response();
++                if matches!(failure, Failure::NxDomain) {
++                    reply.metadata.response_code = ResponseCode::NXDomain;
++                } else {
++                    reply.add_answer(Record::from_rdata(
++                        reply.queries[0].name.clone(),
++                        60,
++                        RData::A(rdata::A("198.51.100.7".parse().unwrap())),
++                    ));
++                }
++                let bytes = reply.to_vec().unwrap();
++                stream.write_u16(bytes.len() as u16).await.unwrap();
++                stream.write_all(&bytes).await.unwrap();
++            }));
++            let builds = Arc::new(AtomicUsize::new(0));
++            let factory_builds = builds.clone();
++            let factory: ResolverFactory = Arc::new(move || {
++                let generation = factory_builds.fetch_add(1, Ordering::Relaxed);
++                Box::pin(async move {
++                    let bootstrap: Arc<dyn ShoesResolver> =
++                        Arc::new(crate::resolver::NativeResolver::new());
++                    let chain = Arc::new(crate::tcp::chain_builder::build_direct_chain_group(
++                        bootstrap.clone(),
++                    ));
++                    let options = HickoryResolverOptions {
++                        ip_strategy: IpStrategy::Ipv4Only,
++                        request_timeout: Some(Duration::from_millis(250)),
++                        attempts: 0,
++                        ..Default::default()
++                    };
++                    let resolver = if matches!(failure, Failure::NoConnections) && generation == 0 {
++                        HickoryResolver::build_pooled(
++                            vec![],
++                            chain,
++                            bootstrap,
++                            options,
++                            "empty test pool".into(),
++                        )?
++                    } else {
++                        HickoryResolver::tcp(address, chain, bootstrap, options)?
++                    };
++                    Ok(Arc::new(resolver) as Arc<dyn ShoesResolver>)
++                })
++            });
++            let resolver = RefreshingResolver::new(
++                factory,
++                RefreshPolicy {
++                    max_idle: Duration::from_secs(3600),
++                    retry_once_after_refresh: true,
++                },
++                "hostname refresh regression".into(),
++            )
++            .await
++            .unwrap();
++            let result =
++                tokio::time::timeout(Duration::from_secs(3), resolver.resolve_location(&location))
++                    .await
++                    .unwrap();
++            match failure {
++                Failure::NxDomain => {
++                    let error = result.unwrap_err();
++                    assert_eq!(error.kind(), std::io::ErrorKind::Other);
++                    assert!(
++                        error
++                            .get_ref()
++                            .unwrap()
++                            .is::<hickory_resolver::net::NetError>()
++                    );
++                    assert_eq!(builds.load(Ordering::Relaxed), 1);
++                }
++                Failure::Timeout | Failure::NoConnections => {
++                    assert_eq!(result.unwrap(), expected_addresses);
++                    assert_eq!(builds.load(Ordering::Relaxed), 2);
++                    assert_eq!(
++                        resolver.resolve_location(&location).await.unwrap(),
++                        expected_addresses
++                    );
++                    assert_eq!(builds.load(Ordering::Relaxed), 2);
++                }
++            }
++            server.await.unwrap();
++        }
++    }
++
+     #[test]
+     fn test_hickory_resolver_options_default() {
+         let opts = HickoryResolverOptions::default();
+diff --git a/src/ffi/android.rs b/src/ffi/android.rs
+index ceccd40..6689ee8 100644
+--- a/src/ffi/android.rs
++++ b/src/ffi/android.rs
+@@ -95,7 +95,8 @@ pub extern "system" fn Java_com_shoesproxy_ShoesNative_init<'local>(
+     let level = crate::logging::parse_log_level(&level_str).unwrap_or(log::LevelFilter::Info);
+ 
+     // Initialize logger (only once)
+-    if !LOGGER_INITIALIZED.swap(true, Ordering::SeqCst) {
++    let _setup = common::LOGGER_SETUP.lock();
++    if !LOGGER_INITIALIZED.load(Ordering::SeqCst) {
+         LOG_FILE.get_or_init(|| parking_lot::Mutex::new(None));
+ 
+         let writers: Vec<Box<dyn LogWriter>> = vec![
+@@ -103,7 +104,10 @@ pub extern "system" fn Java_com_shoesproxy_ShoesNative_init<'local>(
+             Box::new(DynamicFileLogWriter::new(&LOG_FILE)),
+         ];
+         let directives = vec![crate::logging::Directive { name: None, level }];
+-        crate::logging::init_multi_logger(writers, directives);
++        if crate::logging::init_multi_logger(writers, directives).is_err() {
++            return -1;
++        }
++        LOGGER_INITIALIZED.store(true, Ordering::SeqCst);
+     }
+ 
+     info!("shoes initialized with log level: {}", level_str);
+diff --git a/src/ffi/common.rs b/src/ffi/common.rs
+index 042b15f..6899933 100644
+--- a/src/ffi/common.rs
++++ b/src/ffi/common.rs
+@@ -2,8 +2,7 @@
+ //!
+ //! This module contains platform-independent code that both iOS and Android use.
+ 
+-use std::fs::{File, OpenOptions};
+-use std::io::Write;
++use std::fs::OpenOptions;
+ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::{Arc, OnceLock};
+ 
+@@ -13,12 +12,15 @@ use tokio::task::JoinHandle;
+ 
+ use crate::config::{Config, convert_cert_paths, load_config_str};
+ use crate::dns::build_dns_registry_for_runtime;
++use crate::logging::{FILE_LOG_FLUSH_TIMEOUT, FileLogWriter, LogWriter};
+ use crate::tcp::tcp_server::start_servers;
+ #[cfg(unix)]
+ use crate::tun::run_tun_from_config;
+ 
+ /// Global log file handle for file-based logging.
+-pub static LOG_FILE: OnceLock<parking_lot::Mutex<Option<File>>> = OnceLock::new();
++pub static LOG_FILE: OnceLock<parking_lot::Mutex<Option<Arc<FileLogWriter>>>> = OnceLock::new();
++static LOG_FILE_SETUP: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
++pub static LOGGER_SETUP: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+ 
+ /// Global flag to track if logger has been initialized.
+ pub static LOGGER_INITIALIZED: AtomicBool = AtomicBool::new(false);
+@@ -101,35 +103,45 @@ impl Drop for ServerTasks {
+ ///
+ /// Returns 0 on success, -1 on error.
+ pub fn setup_log_file(path_str: &str) -> i32 {
++    let _setup = LOG_FILE_SETUP.lock();
+     let file_mutex = LOG_FILE.get_or_init(|| parking_lot::Mutex::new(None));
+-
+-    match OpenOptions::new().create(true).append(true).open(path_str) {
+-        Ok(file) => {
+-            *file_mutex.lock() = Some(file);
+-            info!("Log file set to: {}", path_str);
+-            0
++    let file = match OpenOptions::new().create(true).append(true).open(path_str) {
++        Ok(file) => file,
++        Err(_) => return -1,
++    };
++    let previous = file_mutex.lock().clone();
++    if let Some(previous) = previous {
++        // Retain a stalled worker and refuse replacement rather than accumulating
++        // uninterruptible threads across repeated set-log-file calls.
++        if previous.shutdown_timeout(FILE_LOG_FLUSH_TIMEOUT).is_err() && !previous.is_finished() {
++            return -1;
+         }
+-        Err(_) => -1,
+     }
++    let writer = match FileLogWriter::from_file(file) {
++        Ok(writer) => Arc::new(writer),
++        Err(_) => return -1,
++    };
++    *file_mutex.lock() = Some(writer);
++    info!("Log file set to: {}", path_str);
++    0
+ }
+ 
+ /// Write a log message to the log file if configured.
+ pub fn write_to_log_file(level: log::Level, target: &str, message: &str) {
+-    if let Some(file_mutex) = LOG_FILE.get() {
+-        let mut guard = file_mutex.lock();
+-        if let Some(ref mut writer) = *guard {
+-            let _ = writeln!(writer, "{} [{}] {}", level, target, message);
+-        }
++    let writer = LOG_FILE.get().and_then(|slot| slot.lock().clone());
++    if let Some(writer) = writer {
++        writer.write_log(
++            &log::Record::builder().level(level).target(target).build(),
++            &format!("{} [{}] {}", level, target, message),
++        );
+     }
+ }
+ 
+ /// Flush the log file.
+ pub fn flush_log_file() {
+-    if let Some(file_mutex) = LOG_FILE.get() {
+-        let mut guard = file_mutex.lock();
+-        if let Some(ref mut writer) = *guard {
+-            let _ = writer.flush();
+-        }
++    let writer = LOG_FILE.get().and_then(|slot| slot.lock().clone());
++    if let Some(writer) = writer {
++        writer.flush();
+     }
+ }
+ 
+@@ -171,6 +183,8 @@ pub fn stop_service() -> bool {
+     }
+ 
+     info!("TUN service stop completed");
++    // The process-global logger survives stop/start; reuse its single worker.
++    flush_log_file();
+     true
+ }
+ 
+diff --git a/src/ffi/ios.rs b/src/ffi/ios.rs
+index 6373376..36dbe87 100644
+--- a/src/ffi/ios.rs
++++ b/src/ffi/ios.rs
+@@ -64,7 +64,8 @@ impl crate::tun::SocketProtector for IosSocketProtector {
+ /// `log_level` must be a valid null-terminated C string.
+ #[unsafe(no_mangle)]
+ pub unsafe extern "C" fn shoes_init(log_level: *const c_char) -> c_int {
+-    if INITIALIZED.swap(true, Ordering::SeqCst) {
++    let _setup = common::LOGGER_SETUP.lock();
++    if INITIALIZED.load(Ordering::SeqCst) {
+         return 0;
+     }
+ 
+@@ -78,7 +79,7 @@ pub unsafe extern "C" fn shoes_init(log_level: *const c_char) -> c_int {
+ 
+     let filter = crate::logging::parse_log_level(level_str).unwrap_or(log::LevelFilter::Info);
+ 
+-    if !LOGGER_INITIALIZED.swap(true, Ordering::SeqCst) {
++    if !LOGGER_INITIALIZED.load(Ordering::SeqCst) {
+         LOG_FILE.get_or_init(|| parking_lot::Mutex::new(None));
+ 
+         // File-only logging on iOS (no stderr output)
+@@ -87,10 +88,14 @@ pub unsafe extern "C" fn shoes_init(log_level: *const c_char) -> c_int {
+             name: None,
+             level: filter,
+         }];
+-        crate::logging::init_multi_logger(writers, directives);
++        if crate::logging::init_multi_logger(writers, directives).is_err() {
++            return -1;
++        }
++        LOGGER_INITIALIZED.store(true, Ordering::SeqCst);
+     }
+ 
+     TUN_SERVICE.get_or_init(|| Mutex::new(None));
++    INITIALIZED.store(true, Ordering::SeqCst);
+ 
+     info!("shoes iOS initialized with log level: {}", level_str);
+     0
+@@ -230,6 +235,227 @@ mod tests {
+     use super::*;
+     use crate::tun::SocketProtector;
+ 
++    // Logger installation is process-global, so these cases need isolated children.
++    fn run_in_subprocess(test_name: &str, marker: &str) -> bool {
++        if std::env::var_os(marker).is_some() {
++            return false;
++        }
++        let output = std::process::Command::new(std::env::current_exe().unwrap())
++            .args(["--exact", test_name, "--nocapture"])
++            .env(marker, "1")
++            .output()
++            .unwrap();
++        let stdout = String::from_utf8_lossy(&output.stdout);
++        let stderr = String::from_utf8_lossy(&output.stderr);
++        assert!(
++            output.status.success(),
++            "subprocess {test_name} failed:\n{stdout}\n{stderr}"
++        );
++        assert!(
++            stdout
++                .lines()
++                .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed;")),
++            "subprocess did not execute exactly one test: {test_name}\n{stdout}\n{stderr}"
++        );
++        true
++    }
++
++    #[test]
++    #[should_panic(expected = "subprocess did not execute exactly one test")]
++    fn subprocess_rejects_missing_test() {
++        run_in_subprocess(
++            "ffi::ios::tests::__missing_subprocess_case__",
++            "SHOES_FILE_LOG_MISSING_CHILD",
++        );
++    }
++
++    #[test]
++    fn file_logging_stop_flushes_buffered_records_without_closing_sink() {
++        if run_in_subprocess(
++            "ffi::ios::tests::file_logging_stop_flushes_buffered_records_without_closing_sink",
++            "SHOES_FILE_LOG_BUFFERED_CHILD",
++        ) {
++            return;
++        }
++        struct BufferedOutput {
++            pending: Vec<u8>,
++            visible: Arc<Mutex<Vec<u8>>>,
++        }
++        impl std::io::Write for BufferedOutput {
++            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++                self.pending.extend_from_slice(bytes);
++                Ok(bytes.len())
++            }
++
++            fn flush(&mut self) -> std::io::Result<()> {
++                self.visible.lock().append(&mut self.pending);
++                Ok(())
++            }
++        }
++
++        assert_eq!(unsafe { shoes_init(std::ptr::null()) }, 0);
++        let visible = Arc::new(Mutex::new(Vec::new()));
++        let writer = Arc::new(
++            crate::logging::FileLogWriter::with_test_writer(BufferedOutput {
++                pending: Vec::new(),
++                visible: visible.clone(),
++            })
++            .unwrap(),
++        );
++        *LOG_FILE.get().unwrap().lock() = Some(writer.clone());
++        info!("buffered before stop");
++        assert!(visible.lock().is_empty());
++
++        shoes_stop(0);
++
++        let contents = String::from_utf8(visible.lock().clone()).unwrap();
++        assert!(
++            contents.contains("buffered before stop"),
++            "stop must flush pending file records"
++        );
++        assert!(contents.contains("TUN service stop completed"));
++        assert!(!writer.is_finished());
++        assert!(Arc::ptr_eq(
++            &writer,
++            LOG_FILE.get().unwrap().lock().as_ref().unwrap()
++        ));
++        let stats = writer.stats();
++        assert_eq!(stats.written_records, stats.accepted_records);
++        assert_eq!(stats.pending_records, 0);
++
++        LOG_FILE.get().unwrap().lock().take();
++        writer
++            .shutdown_timeout(crate::logging::FILE_LOG_FLUSH_TIMEOUT)
++            .unwrap();
++    }
++
++    #[test]
++    fn file_logging_stalled_replacement_retains_one_worker() {
++        use std::sync::mpsc;
++        use std::time::{Duration, Instant};
++
++        if run_in_subprocess(
++            "ffi::ios::tests::file_logging_stalled_replacement_retains_one_worker",
++            "SHOES_FILE_LOG_STALL_CHILD",
++        ) {
++            return;
++        }
++        struct Gate {
++            entered: mpsc::Sender<()>,
++            release: mpsc::Receiver<()>,
++        }
++        impl std::io::Write for Gate {
++            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
++                self.entered.send(()).unwrap();
++                self.release.recv().unwrap();
++                Ok(bytes.len())
++            }
++            fn flush(&mut self) -> std::io::Result<()> {
++                Ok(())
++            }
++        }
++        let directory = tempfile::tempdir().unwrap();
++        let path = directory.path().join("replacement.log");
++        let (entered_tx, entered_rx) = mpsc::channel();
++        let (release_tx, release_rx) = mpsc::channel();
++        assert_eq!(unsafe { shoes_init(std::ptr::null()) }, 0);
++        let writer = Arc::new(
++            crate::logging::FileLogWriter::with_test_writer(Gate {
++                entered: entered_tx,
++                release: release_rx,
++            })
++            .unwrap(),
++        );
++        *LOG_FILE.get().unwrap().lock() = Some(writer.clone());
++        info!("blocked write");
++        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
++        for _ in 0..2 {
++            let started = Instant::now();
++            assert_eq!(setup_log_file(path.to_str().unwrap()), -1);
++            assert!(started.elapsed() < Duration::from_secs(3));
++            assert!(Arc::ptr_eq(
++                &writer,
++                LOG_FILE.get().unwrap().lock().as_ref().unwrap()
++            ));
++        }
++        info!("dropped after failed replacement");
++        assert_eq!(writer.stats().dropped_records, 1);
++        release_tx.send(()).unwrap();
++        writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++        assert_eq!(setup_log_file(path.to_str().unwrap()), 0);
++        let current = LOG_FILE.get().unwrap().lock().take().unwrap();
++        assert_ne!(current.stats().sink_id, writer.stats().sink_id);
++        current.shutdown_timeout(Duration::from_secs(2)).unwrap();
++    }
++
++    #[test]
++    fn file_logging_repeated_init_replacement_and_stop() {
++        if run_in_subprocess(
++            "ffi::ios::tests::file_logging_repeated_init_replacement_and_stop",
++            "SHOES_FILE_LOG_TEST_CHILD",
++        ) {
++            return;
++        }
++        let directory = tempfile::tempdir().unwrap();
++        let first = directory.path().join("first.log");
++        let second = directory.path().join("second.log");
++        assert_eq!(unsafe { shoes_init(std::ptr::null()) }, 0);
++        assert_eq!(setup_log_file(first.to_str().unwrap()), 0);
++        let writer = LOG_FILE.get().unwrap().lock().clone().unwrap();
++        info!("before stop");
++        shoes_stop(0);
++        assert!(
++            std::fs::read_to_string(&first)
++                .unwrap()
++                .contains("before stop")
++        );
++        assert!(!writer.is_finished());
++        assert_eq!(unsafe { shoes_init(std::ptr::null()) }, 0);
++        assert!(Arc::ptr_eq(
++            &writer,
++            LOG_FILE.get().unwrap().lock().as_ref().unwrap()
++        ));
++        info!("after repeated init");
++        assert_eq!(setup_log_file(directory.path().to_str().unwrap()), -1);
++        assert!(Arc::ptr_eq(
++            &writer,
++            LOG_FILE.get().unwrap().lock().as_ref().unwrap()
++        ));
++        assert_eq!(setup_log_file(second.to_str().unwrap()), 0);
++        assert!(writer.is_finished());
++        assert!(
++            std::fs::read_to_string(&first)
++                .unwrap()
++                .contains("after repeated init")
++        );
++        common::write_to_log_file(log::Level::Info, "test", "new\n\u{1b}[31m record");
++        shoes_stop(0);
++        assert!(
++            std::fs::read_to_string(&second)
++                .unwrap()
++                .contains("new\\n\\u{1b}[31m record")
++        );
++        let writer = LOG_FILE.get().unwrap().lock().take().unwrap();
++        writer
++            .shutdown_timeout(crate::logging::FILE_LOG_FLUSH_TIMEOUT)
++            .unwrap();
++    }
++
++    #[test]
++    fn file_logging_init_failure_does_not_mark_initialized() {
++        if run_in_subprocess(
++            "ffi::ios::tests::file_logging_init_failure_does_not_mark_initialized",
++            "SHOES_FILE_LOG_FAILURE_CHILD",
++        ) {
++            return;
++        }
++        let _capture = crate::logging::test_capture::Capture::new();
++        assert_eq!(unsafe { shoes_init(std::ptr::null()) }, -1);
++        assert_eq!(unsafe { shoes_init(std::ptr::null()) }, -1);
++        assert!(!INITIALIZED.load(Ordering::SeqCst));
++        assert!(!LOGGER_INITIALIZED.load(Ordering::SeqCst));
++    }
++
+     #[test]
+     fn protectors_keep_their_own_callback_across_replacement() {
+         extern "C" fn old(fd: c_int) -> bool {
+diff --git a/src/logging.rs b/src/logging.rs
+index 8e5fe27..4ce956a 100644
+--- a/src/logging.rs
++++ b/src/logging.rs
+@@ -5,8 +5,11 @@
+ //! then passes the resulting `&str` to all writers.
+ 
+ use std::cell::Cell;
+-use std::fs::{File, OpenOptions};
+ use std::io::Write;
++use std::sync::Arc;
++
++mod file;
++pub use file::{FILE_LOG_FLUSH_TIMEOUT, FileLogStats, FileLogWriter};
+ 
+ use log::{Level, LevelFilter, Log, Metadata, Record};
+ 
+@@ -32,6 +35,16 @@ pub trait LogWriter: Send + Sync {
+     fn flush(&self);
+ }
+ 
++impl<T: LogWriter> LogWriter for Arc<T> {
++    fn write_log(&self, record: &Record, formatted: &str) {
++        (**self).write_log(record, formatted);
++    }
++
++    fn flush(&self) {
++        (**self).flush();
++    }
++}
++
+ /// Writes to stderr with ASCII sanitization to prevent terminal escape sequences.
+ pub struct StderrWriter;
+ 
+@@ -55,81 +68,35 @@ impl LogWriter for StderrWriter {
+     }
+ }
+ 
+-/// Writes to a file opened at init time. Each log line is a single write() syscall
+-/// to the kernel page cache (no BufWriter needed -- the kernel handles writeback).
+-pub struct FileLogWriter {
+-    file: parking_lot::Mutex<File>,
+-}
+-
+-fn escaped_file_record(formatted: &str) -> String {
+-    let mut line = String::with_capacity(formatted.len() + 1);
+-    for c in formatted.chars() {
+-        if c.is_control()
+-            || matches!(c, '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+-        {
+-            line.extend(c.escape_default());
+-        } else {
+-            line.push(c);
+-        }
+-    }
+-    line.push('\n');
+-    line
+-}
+-
+-impl FileLogWriter {
+-    pub fn new(path: &str) -> std::io::Result<Self> {
+-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+-        Ok(Self {
+-            file: parking_lot::Mutex::new(file),
+-        })
+-    }
+-}
+-
+-impl LogWriter for FileLogWriter {
+-    fn write_log(&self, _record: &Record, formatted: &str) {
+-        let line = escaped_file_record(formatted);
+-        let mut guard = self.file.lock();
+-        let _ = guard.write_all(line.as_bytes());
+-    }
+-
+-    fn flush(&self) {
+-        let _ = self.file.lock().flush();
+-    }
+-}
+-
+ /// Writes to a file that may be set after logger init (FFI use case).
+-/// References a global `OnceLock<parking_lot::Mutex<Option<File>>>`.
+ // Used by iOS/Android FFI targets (ffi/ios.rs, ffi/android.rs).
+ #[allow(dead_code)]
+ pub struct DynamicFileLogWriter {
+-    file: &'static std::sync::OnceLock<parking_lot::Mutex<Option<File>>>,
++    file: &'static std::sync::OnceLock<parking_lot::Mutex<Option<Arc<FileLogWriter>>>>,
+ }
+ 
+ // Used by iOS/Android FFI targets (ffi/ios.rs, ffi/android.rs).
+ #[allow(dead_code)]
+ impl DynamicFileLogWriter {
+-    pub fn new(file: &'static std::sync::OnceLock<parking_lot::Mutex<Option<File>>>) -> Self {
++    pub fn new(
++        file: &'static std::sync::OnceLock<parking_lot::Mutex<Option<Arc<FileLogWriter>>>>,
++    ) -> Self {
+         Self { file }
+     }
+ }
+ 
+ impl LogWriter for DynamicFileLogWriter {
+-    fn write_log(&self, _record: &Record, formatted: &str) {
+-        if let Some(mutex) = self.file.get() {
+-            let mut guard = mutex.lock();
+-            if let Some(ref mut file) = *guard {
+-                let line = escaped_file_record(formatted);
+-                let _ = file.write_all(line.as_bytes());
+-            }
++    fn write_log(&self, record: &Record, formatted: &str) {
++        let file = self.file.get().and_then(|slot| slot.lock().clone());
++        if let Some(file) = file {
++            file.write_log(record, formatted);
+         }
+     }
+ 
+     fn flush(&self) {
+-        if let Some(mutex) = self.file.get() {
+-            let mut guard = mutex.lock();
+-            if let Some(ref mut file) = *guard {
+-                let _ = file.flush();
+-            }
++        let file = self.file.get().and_then(|slot| slot.lock().clone());
++        if let Some(file) = file {
++            file.flush();
+         }
+     }
+ }
+@@ -194,6 +161,11 @@ impl Log for MultiLogger {
+                 writer.write_log(record, &buf);
+             }
+ 
++            // Preserve existing sink formatting without retaining a huge record
++            // on every async worker after an unusually large diagnostic.
++            if buf.capacity() > 16 * 1024 {
++                buf = String::with_capacity(256);
++            }
+             cell.set(buf);
+         });
+     }
+@@ -208,15 +180,15 @@ impl Log for MultiLogger {
+ /// Installs a `MultiLogger` as the global logger.
+ /// Directives are sorted by name length; `log::set_max_level` is set to the
+ /// maximum level across all directives so records reach our `log()` method.
+-pub fn init_multi_logger(writers: Vec<Box<dyn LogWriter>>, mut directives: Vec<Directive>) {
+-    DEFAULT_LEVEL.store(
+-        directives
+-            .iter()
+-            .rev()
+-            .find(|directive| directive.name.is_none())
+-            .map_or(LevelFilter::Off, |directive| directive.level) as usize,
+-        std::sync::atomic::Ordering::Relaxed,
+-    );
++pub fn init_multi_logger(
++    writers: Vec<Box<dyn LogWriter>>,
++    mut directives: Vec<Directive>,
++) -> Result<(), log::SetLoggerError> {
++    let default_level = directives
++        .iter()
++        .rev()
++        .find(|directive| directive.name.is_none())
++        .map_or(LevelFilter::Off, |directive| directive.level);
+     directives.sort_by_key(|d| d.name.as_ref().map_or(0, |n| n.len()));
+     let max_level = directives
+         .iter()
+@@ -227,8 +199,10 @@ pub fn init_multi_logger(writers: Vec<Box<dyn LogWriter>>, mut directives: Vec<D
+         writers,
+         directives,
+     };
+-    log::set_boxed_logger(Box::new(logger)).expect("logger already initialized");
++    log::set_boxed_logger(Box::new(logger))?;
++    DEFAULT_LEVEL.store(default_level as usize, std::sync::atomic::Ordering::Relaxed);
+     log::set_max_level(max_level);
++    Ok(())
+ }
+ 
+ /// Parses a level string (case-insensitive). Returns `None` for unrecognized values.
+@@ -340,7 +314,7 @@ mod tests {
+ 
+     #[test]
+     fn dynamic_file_writer_escapes_records_after_installation() {
+-        static FILE: std::sync::OnceLock<parking_lot::Mutex<Option<File>>> =
++        static FILE: std::sync::OnceLock<parking_lot::Mutex<Option<Arc<FileLogWriter>>>> =
+             std::sync::OnceLock::new();
+         let directory = tempfile::tempdir().unwrap();
+         let path = directory.path().join("log");
+@@ -351,7 +325,9 @@ mod tests {
+         let file = FILE.get_or_init(|| parking_lot::Mutex::new(None));
+         writer.write_log(&record, "before installation");
+         writer.flush();
+-        *file.lock() = Some(File::create(&path).unwrap());
++        *file.lock() = Some(Arc::new(
++            FileLogWriter::new(path.to_str().unwrap()).unwrap(),
++        ));
+         check_file_records(&writer, &path);
+         *file.lock() = None;
+         writer.write_log(&record, "after removal");
+@@ -359,6 +335,33 @@ mod tests {
+         assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 2);
+     }
+ 
++    #[test]
++    fn repeated_logger_init_returns_error_and_drains_rejected_writer() {
++        let _capture = test_capture::Capture::new();
++        let original_default = default_level();
++        let original_max = log::max_level();
++        let directory = tempfile::tempdir().unwrap();
++        let path = directory.path().join("rejected.log");
++        let writer = FileLogWriter::new(path.to_str().unwrap()).unwrap();
++        writer.write_log(&Record::builder().build(), "before rejected init");
++        assert!(
++            init_multi_logger(
++                vec![Box::new(writer)],
++                vec![Directive {
++                    name: None,
++                    level: LevelFilter::Off
++                }],
++            )
++            .is_err()
++        );
++        assert_eq!(default_level(), original_default);
++        assert_eq!(log::max_level(), original_max);
++        assert_eq!(
++            std::fs::read_to_string(path).unwrap(),
++            "before rejected init\n"
++        );
++    }
++
+     /// Builds a MultiLogger (no writers) from directives for testing matches().
+     fn logger_from(mut directives: Vec<Directive>) -> MultiLogger {
+         directives.sort_by_key(|d| d.name.as_ref().map_or(0, |n| n.len()));
+diff --git a/src/logging/file.rs b/src/logging/file.rs
+new file mode 100644
+index 0000000..efe7037
+--- /dev/null
++++ b/src/logging/file.rs
+@@ -0,0 +1,329 @@
++use std::collections::VecDeque;
++use std::fs::{File, OpenOptions};
++use std::io::{self, Write};
++use std::sync::Arc;
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::thread::JoinHandle;
++use std::time::{Duration, Instant};
++
++use parking_lot::{Condvar, Mutex};
++
++use super::LogWriter;
++
++const MAX_RECORDS: usize = 256;
++const MAX_BYTES: usize = 1024 * 1024;
++const MAX_RECORD_BYTES: usize = 16 * 1024;
++pub const FILE_LOG_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
++
++/// Process-local sink identity and cumulative health counters. Pending bounds
++/// include the record currently being written; no paths or record contents.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct FileLogStats {
++    pub sink_id: u64,
++    pub pending_records: usize,
++    pub pending_bytes: usize,
++    pub accepted_records: u64,
++    pub written_records: u64,
++    pub dropped_records: u64,
++    pub truncated_records: u64,
++    pub io_errors: u64,
++}
++
++struct State {
++    queue: VecDeque<Box<str>>,
++    stats: FileLogStats,
++    closing: bool,
++    finished: bool,
++    flush_target: Option<u64>,
++    flushed_through: Option<u64>,
++}
++
++struct Shared {
++    state: Mutex<State>,
++    changed: Condvar,
++}
++
++/// Dedicated blocking writer with drop-newest overload handling. Admission and
++/// accounting share a mutex; escaping and filesystem I/O run outside it.
++pub struct FileLogWriter {
++    shared: Arc<Shared>,
++    worker: Mutex<Option<JoinHandle<()>>>,
++}
++
++impl FileLogWriter {
++    pub fn new(path: &str) -> io::Result<Self> {
++        Self::from_file(OpenOptions::new().create(true).append(true).open(path)?)
++    }
++
++    pub(crate) fn from_file(file: File) -> io::Result<Self> {
++        Self::with_writer(file)
++    }
++
++    #[cfg(all(test, any(target_os = "ios", all(unix, feature = "ffi"))))]
++    pub(crate) fn with_test_writer(writer: impl Write + Send + 'static) -> io::Result<Self> {
++        Self::with_writer(writer)
++    }
++
++    fn with_writer(writer: impl Write + Send + 'static) -> io::Result<Self> {
++        static NEXT_SINK: AtomicU64 = AtomicU64::new(1);
++        let shared = Arc::new(Shared {
++            state: Mutex::new(State {
++                queue: VecDeque::new(),
++                stats: FileLogStats {
++                    sink_id: NEXT_SINK.fetch_add(1, Ordering::Relaxed),
++                    ..FileLogStats::default()
++                },
++                closing: false,
++                finished: false,
++                flush_target: None,
++                flushed_through: None,
++            }),
++            changed: Condvar::new(),
++        });
++        let worker_shared = shared.clone();
++        let worker = std::thread::Builder::new()
++            .name("shoes-file-log".into())
++            .spawn(move || run_worker(worker_shared, writer))?;
++        Ok(Self {
++            shared,
++            worker: Mutex::new(Some(worker)),
++        })
++    }
++
++    pub fn stats(&self) -> FileLogStats {
++        self.shared.state.lock().stats
++    }
++
++    /// True once the worker has released its writer, including after I/O failure.
++    pub fn is_finished(&self) -> bool {
++        self.shared.state.lock().finished
++    }
++
++    /// Wait for records accepted before this call, without closing the sink.
++    /// This lifecycle operation must not be called from a relay worker.
++    pub fn flush_timeout(&self, timeout: Duration) -> io::Result<()> {
++        self.wait_until(Instant::now() + timeout, false)
++    }
++
++    /// Stop admissions and drain until the deadline. On timeout, discard queued
++    /// records and retain the worker handle: an in-flight OS write is not cancellable.
++    pub fn shutdown_timeout(&self, timeout: Duration) -> io::Result<()> {
++        self.wait_until(Instant::now() + timeout, true)
++    }
++
++    fn wait_until(&self, deadline: Instant, shutdown: bool) -> io::Result<()> {
++        let mut state = self.shared.state.lock();
++        let target = state.stats.accepted_records;
++        if shutdown {
++            state.closing = true;
++        }
++        if state.flushed_through.is_none_or(|count| count < target) {
++            state.flush_target = Some(state.flush_target.unwrap_or(0).max(target));
++        }
++        self.shared.changed.notify_all();
++        loop {
++            if state.stats.io_errors != 0 && (!shutdown || state.finished) {
++                return Err(io::Error::other("file log worker failed"));
++            }
++            let completed = if shutdown {
++                state.finished
++            } else {
++                state.flushed_through.is_some_and(|count| count >= target)
++            };
++            if completed {
++                drop(state);
++                let mut worker = self.worker.lock();
++                if worker.as_ref().is_some_and(JoinHandle::is_finished) {
++                    let _ = worker.take().unwrap().join();
++                }
++                return Ok(());
++            }
++            if state.finished {
++                return Err(io::Error::new(
++                    io::ErrorKind::BrokenPipe,
++                    "file log worker closed before flush target",
++                ));
++            }
++            if Instant::now() >= deadline {
++                if shutdown {
++                    discard_queue(&mut state);
++                }
++                return Err(io::Error::new(
++                    io::ErrorKind::TimedOut,
++                    "file log deadline expired",
++                ));
++            }
++            self.shared.changed.wait_until(&mut state, deadline);
++        }
++    }
++}
++
++impl LogWriter for FileLogWriter {
++    fn write_log(&self, _: &log::Record, formatted: &str) {
++        {
++            let mut state = self.shared.state.lock();
++            if state.closing || state.finished || state.stats.pending_records == MAX_RECORDS {
++                state.stats.dropped_records += 1;
++                return;
++            }
++        }
++        // Escape only a bounded prefix, including expansion and the line delimiter.
++        let (line, truncated) = escaped_record(formatted);
++        let mut state = self.shared.state.lock();
++        if state.closing
++            || state.finished
++            || state.stats.pending_records == MAX_RECORDS
++            || state.stats.pending_bytes + line.len() > MAX_BYTES
++        {
++            state.stats.dropped_records += 1;
++            return;
++        }
++        state.stats.truncated_records += u64::from(truncated);
++        state.stats.accepted_records += 1;
++        state.stats.pending_records += 1;
++        state.stats.pending_bytes += line.len();
++        state.queue.push_back(line.into_boxed_str());
++        self.shared.changed.notify_all();
++    }
++
++    fn flush(&self) {
++        let _ = self.flush_timeout(FILE_LOG_FLUSH_TIMEOUT);
++    }
++}
++
++impl Drop for FileLogWriter {
++    fn drop(&mut self) {
++        // Do not spend a second deadline after an explicit shutdown timed out.
++        if !self.shared.state.lock().closing {
++            let _ = self.shutdown_timeout(FILE_LOG_FLUSH_TIMEOUT);
++        }
++        // Dropping a still-running JoinHandle detaches it. It retains at most one
++        // bounded record and the OS handle until that blocking call returns.
++    }
++}
++
++fn escaped_record(formatted: &str) -> (String, bool) {
++    const TRUNCATED_SUFFIX: &str = " [truncated]\n";
++    let mut line = String::with_capacity((formatted.len().saturating_add(1)).min(MAX_RECORD_BYTES));
++    let mut truncated = false;
++    for c in formatted.chars() {
++        let escape = c.is_control()
++            || matches!(c, '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
++        let encoded_len = if escape {
++            c.escape_default().count()
++        } else {
++            c.len_utf8()
++        };
++        if line.len() + encoded_len > MAX_RECORD_BYTES - TRUNCATED_SUFFIX.len() {
++            truncated = true;
++            break;
++        }
++        if escape {
++            line.extend(c.escape_default());
++        } else {
++            line.push(c);
++        }
++    }
++    line.push_str(if truncated { TRUNCATED_SUFFIX } else { "\n" });
++    (line, truncated)
++}
++
++fn discard_queue(state: &mut State) {
++    while let Some(line) = state.queue.pop_front() {
++        state.stats.pending_records -= 1;
++        state.stats.pending_bytes -= line.len();
++        state.stats.dropped_records += 1;
++    }
++}
++
++fn report_health(stats: FileLogStats) {
++    // Never recurse through log:: or expose paths, errors, payloads, or credentials.
++    let _ = writeln!(
++        std::io::stderr(),
++        "event=file_log_health version=1 sink_id={} dropped_records={} truncated_records={} io_errors={}",
++        stats.sink_id,
++        stats.dropped_records,
++        stats.truncated_records,
++        stats.io_errors,
++    );
++}
++
++fn run_worker(shared: Arc<Shared>, mut writer: impl Write) {
++    let mut reported_health = (0, 0, 0);
++    let mut last_report = Instant::now();
++    loop {
++        let mut state = shared.state.lock();
++        // Acknowledge progress before the next write can stall. Keeping only
++        // the highest target must not postpone earlier callers' barriers.
++        let flush_progress = state.flush_target.is_some()
++            && state
++                .flushed_through
++                .is_none_or(|count| count < state.stats.written_records);
++        let shutting_down = state.closing && state.queue.is_empty();
++        let line = if flush_progress || shutting_down {
++            None
++        } else if let Some(line) = state.queue.pop_front() {
++            Some(line)
++        } else {
++            shared.changed.wait(&mut state);
++            continue;
++        };
++        drop(state);
++
++        let result = match &line {
++            Some(line) => writer.write_all(line.as_bytes()),
++            None => writer.flush(),
++        };
++        let mut state = shared.state.lock();
++        let flush_completed = line.is_none()
++            && state
++                .flush_target
++                .is_some_and(|target| target <= state.stats.written_records);
++        if let Some(line) = line {
++            state.stats.pending_records -= 1;
++            state.stats.pending_bytes -= line.len();
++            if result.is_ok() {
++                state.stats.written_records += 1;
++            } else {
++                state.stats.dropped_records += 1;
++            }
++        } else if result.is_ok() {
++            state.flushed_through = Some(state.stats.written_records);
++            if flush_completed {
++                state.flush_target = None;
++            }
++        }
++        if result.is_err() {
++            state.stats.io_errors += 1;
++            state.closing = true;
++            discard_queue(&mut state);
++        }
++        let should_finish = shutting_down || result.is_err();
++        let stats = state.stats;
++        let health = (
++            stats.dropped_records,
++            stats.truncated_records,
++            stats.io_errors,
++        );
++        let report = health != reported_health
++            && (should_finish
++                || flush_completed
++                || last_report.elapsed() >= Duration::from_secs(1));
++        shared.changed.notify_all();
++        drop(state);
++        if report {
++            report_health(stats);
++            reported_health = health;
++            last_report = Instant::now();
++        }
++        if should_finish {
++            drop(writer);
++            shared.state.lock().finished = true;
++            shared.changed.notify_all();
++            return;
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/src/logging/file/tests.rs b/src/logging/file/tests.rs
+new file mode 100644
+index 0000000..ed8113a
+--- /dev/null
++++ b/src/logging/file/tests.rs
+@@ -0,0 +1,521 @@
++use super::*;
++use std::sync::mpsc;
++
++#[derive(Clone, Default)]
++struct Output(Arc<Mutex<Vec<u8>>>);
++
++impl Write for Output {
++    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++        self.0.lock().extend_from_slice(bytes);
++        Ok(bytes.len())
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        Ok(())
++    }
++}
++
++struct Stalled {
++    entered: Option<mpsc::Sender<()>>,
++    release: mpsc::Receiver<()>,
++    output: Output,
++    stall_flush: bool,
++}
++
++impl Stalled {
++    fn wait(&mut self) {
++        if let Some(entered) = self.entered.take() {
++            entered.send(()).unwrap();
++            self.release.recv().unwrap();
++        }
++    }
++}
++
++impl Write for Stalled {
++    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++        if !self.stall_flush {
++            self.wait();
++        }
++        self.output.write(bytes)
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        if self.stall_flush {
++            self.wait();
++        }
++        Ok(())
++    }
++}
++
++struct Release(mpsc::Sender<()>);
++
++impl Drop for Release {
++    fn drop(&mut self) {
++        let _ = self.0.send(());
++    }
++}
++
++fn stalled(stall_flush: bool) -> (Arc<FileLogWriter>, mpsc::Receiver<()>, Release, Output) {
++    let (entered_tx, entered_rx) = mpsc::channel();
++    let (release_tx, release_rx) = mpsc::channel();
++    let output = Output::default();
++    let writer = FileLogWriter::with_writer(Stalled {
++        entered: Some(entered_tx),
++        release: release_rx,
++        output: output.clone(),
++        stall_flush,
++    })
++    .unwrap();
++    (Arc::new(writer), entered_rx, Release(release_tx), output)
++}
++
++fn emit(writer: &FileLogWriter, text: &str) {
++    writer.write_log(&log::Record::builder().build(), text);
++}
++
++#[test]
++fn stalled_storage_does_not_block_current_thread_relay_and_drops_newest_in_order() {
++    let (writer, entered, release, output) = stalled(false);
++    emit(&writer, "first");
++    entered.recv_timeout(Duration::from_secs(2)).unwrap();
++    let producer = writer.clone();
++    let (done_tx, done_rx) = mpsc::channel();
++    let relay = std::thread::spawn(move || {
++        tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .unwrap()
++            .block_on(async {
++                use tokio::io::{AsyncReadExt, AsyncWriteExt};
++                let (mut left, mut right) = tokio::io::duplex(16);
++                tokio::join!(
++                    async {
++                        for n in 0..1000 {
++                            emit(&producer, &n.to_string());
++                        }
++                        left.write_all(b"relay").await.unwrap();
++                    },
++                    async {
++                        let mut bytes = [0; 5];
++                        right.read_exact(&mut bytes).await.unwrap();
++                        assert_eq!(&bytes, b"relay");
++                    }
++                );
++            });
++        done_tx.send(()).unwrap();
++    });
++    let completed = done_rx.recv_timeout(Duration::from_secs(2));
++    if completed.is_err() {
++        drop(release);
++        relay.join().unwrap();
++        panic!("logging blocked relay progress: {completed:?}");
++    }
++    let stats = writer.stats();
++    drop(release);
++    relay.join().unwrap();
++    completed.unwrap();
++    assert_eq!(stats.pending_records, MAX_RECORDS);
++    assert!(stats.pending_bytes <= MAX_BYTES);
++    assert_eq!(stats.dropped_records, 1001 - MAX_RECORDS as u64);
++    writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++    let expected = format!(
++        "first\n{}",
++        (0..255).map(|n| format!("{n}\n")).collect::<String>()
++    );
++    assert_eq!(*output.0.lock(), expected.as_bytes());
++    assert_eq!(writer.stats().pending_bytes, 0);
++}
++
++#[test]
++fn byte_limit_includes_inflight_record_and_escaping_expansion() {
++    let (writer, entered, release, _) = stalled(false);
++    let large = "\u{202e}".repeat(MAX_RECORD_BYTES);
++    emit(&writer, &large);
++    entered.recv_timeout(Duration::from_secs(2)).unwrap();
++    let escaped_len = escaped_record(&large).0.len();
++    assert_eq!(writer.stats().pending_records, 1);
++    assert_eq!(writer.stats().pending_bytes, escaped_len);
++    for _ in 0..MAX_RECORDS {
++        emit(&writer, &large);
++    }
++    let stats = writer.stats();
++    assert!(stats.pending_records < MAX_RECORDS);
++    assert!(stats.pending_bytes <= MAX_BYTES);
++    assert!(stats.pending_bytes > MAX_BYTES - MAX_RECORD_BYTES);
++    assert!(stats.dropped_records > 0);
++    assert_eq!(stats.accepted_records as usize, MAX_BYTES / escaped_len);
++    assert_eq!(stats.pending_records as u64, stats.accepted_records);
++    assert_eq!(stats.pending_bytes, stats.pending_records * escaped_len);
++    assert_eq!(stats.truncated_records, stats.accepted_records);
++    drop(release);
++    writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++}
++
++#[test]
++fn escaped_records_are_bounded_valid_unicode_and_single_line() {
++    for input in ["\u{1b}\n\r\0".repeat(20000), "\u{65e5}".repeat(20000)] {
++        let (line, truncated) = escaped_record(&input);
++        assert!(truncated);
++        assert!(line.len() <= MAX_RECORD_BYTES);
++        assert!(line.ends_with(" [truncated]\n"));
++        assert_eq!(line.lines().count(), 1);
++        assert!(line.chars().all(|c| !c.is_control() || c == '\n'));
++    }
++}
++
++#[test]
++fn shutdown_deadline_discards_backlog_and_does_not_wait_again_on_drop() {
++    let (writer, entered, release, _) = stalled(false);
++    emit(&writer, "blocked");
++    entered.recv_timeout(Duration::from_secs(2)).unwrap();
++    emit(&writer, "queued");
++    let started = Instant::now();
++    assert_eq!(
++        writer
++            .shutdown_timeout(Duration::from_millis(30))
++            .unwrap_err()
++            .kind(),
++        io::ErrorKind::TimedOut
++    );
++    assert!(started.elapsed() < Duration::from_secs(1));
++    assert!(!writer.is_finished());
++    assert!(writer.worker.lock().is_some());
++    let stats = writer.stats();
++    assert_eq!(stats.pending_records, 1);
++    assert_eq!(stats.dropped_records, 1);
++    emit(&writer, "after close");
++    assert_eq!(writer.stats().dropped_records, 2);
++    let worker = writer.worker.lock().take().unwrap();
++    let started = Instant::now();
++    drop(writer);
++    assert!(started.elapsed() < Duration::from_secs(1));
++    drop(release);
++    worker.join().unwrap();
++}
++
++#[test]
++fn stalled_flush_is_bounded_and_recoverable() {
++    let (writer, entered, release, _) = stalled(true);
++    emit(&writer, "written");
++    assert_eq!(
++        writer
++            .flush_timeout(Duration::from_millis(30))
++            .unwrap_err()
++            .kind(),
++        io::ErrorKind::TimedOut
++    );
++    entered.recv_timeout(Duration::from_secs(2)).unwrap();
++    emit(&writer, "after flush timeout");
++    drop(release);
++    writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++    assert_eq!(writer.stats().written_records, 2);
++}
++
++struct FailingWriter {
++    fail_on_flush: bool,
++}
++
++impl Write for FailingWriter {
++    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++        if self.fail_on_flush {
++            Ok(bytes.len())
++        } else {
++            Err(io::Error::other("private write error"))
++        }
++    }
++    fn flush(&mut self) -> io::Result<()> {
++        if self.fail_on_flush {
++            Err(io::Error::other("private flush error"))
++        } else {
++            Ok(())
++        }
++    }
++}
++
++#[test]
++fn write_and_flush_errors_close_sink_without_recursive_logging() {
++    for fail_on_flush in [false, true] {
++        let writer = FileLogWriter::with_writer(FailingWriter { fail_on_flush }).unwrap();
++        emit(&writer, "test");
++        if fail_on_flush {
++            let deadline = Instant::now() + Duration::from_secs(2);
++            let mut state = writer.shared.state.lock();
++            while state.stats.written_records != 1 {
++                assert!(Instant::now() < deadline);
++                writer.shared.changed.wait_until(&mut state, deadline);
++            }
++        }
++        assert!(writer.shutdown_timeout(Duration::from_secs(2)).is_err());
++        let failed = writer.stats();
++        assert_eq!(failed.accepted_records, 1);
++        assert_eq!(failed.written_records, u64::from(fail_on_flush));
++        assert_eq!(failed.dropped_records, u64::from(!fail_on_flush));
++        emit(&writer, "after failure");
++        let stats = writer.stats();
++        assert_eq!(stats.io_errors, 1);
++        assert_eq!(stats.pending_records, 0);
++        assert_eq!(stats.pending_bytes, 0);
++        assert_eq!(stats.dropped_records, failed.dropped_records + 1);
++        assert!(writer.is_finished());
++    }
++}
++
++#[test]
++fn flush_barrier_and_drop_drain_normal_writer() {
++    let output = Output::default();
++    let writer = FileLogWriter::with_writer(output.clone()).unwrap();
++    emit(&writer, "first");
++    writer.flush_timeout(Duration::from_secs(2)).unwrap();
++    assert_eq!(*output.0.lock(), b"first\n");
++    emit(&writer, "second");
++    drop(writer);
++    assert_eq!(*output.0.lock(), b"first\nsecond\n");
++}
++
++#[test]
++fn open_failure_is_explicit() {
++    let directory = tempfile::tempdir().unwrap();
++    assert!(FileLogWriter::new(directory.path().to_str().unwrap()).is_err());
++}
++
++struct GatedBufferedWriter {
++    entered: mpsc::Sender<()>,
++    release: mpsc::Receiver<()>,
++    buffered: Vec<u8>,
++    output: Output,
++}
++
++impl Write for GatedBufferedWriter {
++    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++        let _ = self.entered.send(());
++        // Disconnection releases every gate during failed-test cleanup.
++        let _ = self.release.recv_timeout(Duration::from_secs(5));
++        self.buffered.extend_from_slice(bytes);
++        Ok(bytes.len())
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        self.output.write_all(&self.buffered)?;
++        self.buffered.clear();
++        Ok(())
++    }
++}
++
++#[test]
++fn earlier_flush_completes_before_later_flush_or_shutdown_target() {
++    for shutdown in [false, true] {
++        let (entered_tx, entered_rx) = mpsc::channel();
++        let (release_tx, release_rx) = mpsc::channel();
++        let output = Output::default();
++        let writer = Arc::new(
++            FileLogWriter::with_writer(GatedBufferedWriter {
++                entered: entered_tx,
++                release: release_rx,
++                buffered: Vec::new(),
++                output: output.clone(),
++            })
++            .unwrap(),
++        );
++        emit(&writer, "A");
++        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
++        let first_writer = writer.clone();
++        let (first_tx, first_rx) = mpsc::channel();
++        let first = std::thread::spawn(move || {
++            let result = first_writer.flush_timeout(Duration::from_secs(2));
++            let _ = first_tx.send(result);
++        });
++        let request_deadline = Instant::now() + Duration::from_secs(1);
++        let mut state = writer.shared.state.lock();
++        while state.flush_target != Some(1) {
++            assert!(Instant::now() < request_deadline);
++            writer
++                .shared
++                .changed
++                .wait_until(&mut state, request_deadline);
++        }
++        drop(state);
++        emit(&writer, "B");
++
++        // Hold the state lock until parked: only the second lifecycle request
++        // can notify us while A is gated and the first flusher is waiting.
++        let mut state = writer.shared.state.lock();
++        let second_writer = writer.clone();
++        let (second_tx, second_rx) = mpsc::channel();
++        let second = std::thread::spawn(move || {
++            let result = if shutdown {
++                second_writer.shutdown_timeout(Duration::from_secs(2))
++            } else {
++                second_writer.flush_timeout(Duration::from_secs(2))
++            };
++            let _ = second_tx.send(result);
++        });
++        let notified = writer
++            .shared
++            .changed
++            .wait_for(&mut state, Duration::from_secs(1));
++        assert!(!notified.timed_out());
++        assert_eq!(state.flush_target, Some(2));
++        drop(state);
++        assert!(matches!(
++            first_rx.try_recv(),
++            Err(mpsc::TryRecvError::Empty)
++        ));
++
++        release_tx.send(()).unwrap();
++        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
++        let first_result = first_rx.recv_timeout(Duration::from_secs(1));
++        let first_output = output.0.lock().clone();
++        let second_pending = matches!(second_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
++        // Release before inspecting results so assertion failures cannot strand B.
++        drop(release_tx);
++        first.join().unwrap();
++        let second_result = second_rx.recv_timeout(Duration::from_secs(2));
++        second.join().unwrap();
++        writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++        if let Some(worker) = writer.worker.lock().take() {
++            worker.join().unwrap();
++        }
++
++        first_result.unwrap().unwrap();
++        assert_eq!(first_output, b"A\n");
++        assert!(second_pending);
++        second_result.unwrap().unwrap();
++        assert_eq!(*output.0.lock(), b"A\nB\n");
++    }
++}
++
++#[test]
++fn finished_sink_flush_returns_immediately_after_timeout_discards_records() {
++    let (writer, entered, release, _) = stalled(false);
++    emit(&writer, "A");
++    entered.recv_timeout(Duration::from_secs(2)).unwrap();
++    emit(&writer, "B");
++    assert_eq!(
++        writer.shutdown_timeout(Duration::ZERO).unwrap_err().kind(),
++        io::ErrorKind::TimedOut
++    );
++    drop(release);
++    writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++    assert!(writer.is_finished());
++    let stats = writer.stats();
++    assert_eq!(stats.accepted_records, 2);
++    assert_eq!(stats.written_records, 1);
++    assert_eq!(stats.dropped_records, 1);
++    let began = Instant::now();
++    assert_eq!(
++        writer
++            .flush_timeout(Duration::from_secs(2))
++            .unwrap_err()
++            .kind(),
++        io::ErrorKind::BrokenPipe
++    );
++    assert!(began.elapsed() < Duration::from_secs(1));
++}
++
++#[test]
++fn fresh_sink_flush_completes_without_accepting_records() {
++    let writer = FileLogWriter::with_writer(Output::default()).unwrap();
++    assert_eq!(writer.shared.state.lock().flushed_through, None);
++    let began = Instant::now();
++    writer.flush_timeout(Duration::from_secs(2)).unwrap();
++    assert!(began.elapsed() < Duration::from_secs(1));
++    assert_eq!(writer.shared.state.lock().flushed_through, Some(0));
++    let stats = writer.stats();
++    assert_eq!(stats.accepted_records, 0);
++    assert_eq!(stats.written_records, 0);
++    writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++}
++
++#[test]
++fn finished_sink_flush_succeeds_after_clean_shutdown() {
++    let writer = FileLogWriter::with_writer(Output::default()).unwrap();
++    emit(&writer, "A");
++    writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++    assert!(writer.is_finished());
++    writer.flush_timeout(Duration::ZERO).unwrap();
++    assert_eq!(writer.shared.state.lock().flushed_through, Some(1));
++}
++
++#[test]
++fn concurrent_producers_preserve_bounds_and_each_producers_order() {
++    for large in [false, true] {
++        let (writer, entered, release, output) = stalled(false);
++        emit(&writer, "prime");
++        entered.recv_timeout(Duration::from_secs(2)).unwrap();
++        let start = Arc::new(std::sync::Barrier::new(4));
++        let mut producers = Vec::new();
++        for producer in 0..4 {
++            let writer = writer.clone();
++            let start = start.clone();
++            producers.push(std::thread::spawn(move || {
++                let payload = if large {
++                    "peer\u{1b}\n".repeat(1300)
++                } else {
++                    String::new()
++                };
++                start.wait();
++                for sequence in 0..128 {
++                    emit(&writer, &format!("{producer}:{sequence}:{payload}"));
++                }
++            }));
++        }
++        for producer in producers {
++            producer.join().unwrap();
++        }
++        let pending = writer.stats();
++        drop(release);
++        writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++        assert_eq!(pending.accepted_records + pending.dropped_records, 513);
++        assert_eq!(pending.pending_records as u64, pending.accepted_records);
++        assert_eq!(pending.written_records, 0);
++        assert!(pending.pending_records <= MAX_RECORDS);
++        assert!(pending.pending_bytes <= MAX_BYTES);
++        assert!(pending.dropped_records > 0);
++
++        let contents = String::from_utf8(output.0.lock().clone()).unwrap();
++        assert_eq!(contents.len(), pending.pending_bytes);
++        assert_eq!(contents.lines().count() as u64, pending.accepted_records);
++        let mut previous = [None; 4];
++        for line in contents.lines().skip(1) {
++            let mut fields = line.splitn(3, ':');
++            let producer: usize = fields.next().unwrap().parse().unwrap();
++            let sequence: usize = fields.next().unwrap().parse().unwrap();
++            assert!(sequence < 128);
++            assert!(previous[producer].is_none_or(|last| last < sequence));
++            previous[producer] = Some(sequence);
++        }
++        let finished = writer.stats();
++        assert_eq!(finished.written_records, pending.accepted_records);
++        assert_eq!(finished.pending_records, 0);
++        assert_eq!(finished.pending_bytes, 0);
++    }
++}
++
++#[test]
++fn concurrent_producers_racing_shutdown_leave_no_pending_records() {
++    let writer = Arc::new(FileLogWriter::with_writer(Output::default()).unwrap());
++    let start = Arc::new(std::sync::Barrier::new(5));
++    let mut producers = Vec::new();
++    emit(&writer, "prime");
++    for _ in 0..4 {
++        let writer = writer.clone();
++        let start = start.clone();
++        producers.push(std::thread::spawn(move || {
++            let text = "peer\u{1b}\n".repeat(1300);
++            start.wait();
++            for _ in 0..128 {
++                emit(&writer, &text);
++            }
++        }));
++    }
++    start.wait();
++    writer.shutdown_timeout(Duration::from_secs(2)).unwrap();
++    for producer in producers {
++        producer.join().unwrap();
++    }
++    let stats = writer.stats();
++    assert_eq!(stats.accepted_records + stats.dropped_records, 513);
++    assert_eq!(stats.written_records, stats.accepted_records);
++    assert_eq!(stats.pending_records, 0);
++    assert_eq!(stats.pending_bytes, 0);
++}
+diff --git a/tests/cases/process_contract/file_logging.rs b/tests/cases/process_contract/file_logging.rs
+new file mode 100644
+index 0000000..6aee7ab
+--- /dev/null
++++ b/tests/cases/process_contract/file_logging.rs
+@@ -0,0 +1,94 @@
++use super::*;
++
++#[test]
++fn file_logging_check_drains_without_enabling_stderr_or_leaking_credentials() {
++    let directory = tempfile::tempdir().unwrap();
++    let config = directory.path().join("config.yaml");
++    let log = directory.path().join("check.log");
++    let secret = "d55f24e6-5508-4fce-aeaf-858613a97e47";
++    std::fs::write(&config, format!("- address: '127.0.0.1:0'\n  protocol:\n    type: vmess\n    cipher: aes-128-gcm\n    user_id: {secret}\n    force_aead: true\n")).unwrap();
++    let output = Command::new(env!("CARGO_BIN_EXE_shoes"))
++        .args(["check", "-t", "1", "-l"])
++        .arg(&log)
++        .arg(&config)
++        .env("RUST_LOG", "warn")
++        .output()
++        .unwrap();
++    assert!(
++        output.status.success(),
++        "{}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    assert!(output.stderr.is_empty());
++    let contents = std::fs::read_to_string(log).unwrap();
++    assert!(contents.contains("force_aead"));
++    assert!(!contents.contains(secret));
++}
++
++#[tokio::test]
++async fn file_logging_flushes_both_sinks_on_sigterm() {
++    let directory = tempfile::tempdir().unwrap();
++    let config = directory.path().join("config.yaml");
++    let first = directory.path().join("first.log");
++    let second = directory.path().join("second.log");
++    let address = available_address();
++    std::fs::write(
++        &config,
++        format!("- address: {address}\n  protocol:\n    type: socks\n"),
++    )
++    .unwrap();
++    std::fs::write(&first, "previous record\n").unwrap();
++    let mut process = Process::start(
++        &config,
++        &[
++            "--no-reload",
++            "-l",
++            first.to_str().unwrap(),
++            "-l",
++            second.to_str().unwrap(),
++            "-l",
++            "-",
++        ],
++    );
++    process.wait_for("Servers ready").await;
++    let mut stream = TcpStream::connect(address).await.unwrap();
++    stream.write_all(b"\xff\x00").await.unwrap();
++    stream.shutdown().await.unwrap();
++    process.wait_for("finished with error").await;
++    process.signal(libc::SIGTERM);
++    let (tx, rx) = std::sync::mpsc::channel();
++    std::thread::scope(|scope| {
++        let pid = process.child.id();
++        scope.spawn(|| tx.send(process.child.wait().unwrap()).unwrap());
++        let status = rx.recv_timeout(Duration::from_secs(8));
++        if status.is_err() {
++            unsafe {
++                libc::kill(pid as i32, libc::SIGKILL);
++            }
++        }
++        assert!(status.expect("CLI shutdown deadline exceeded").success());
++    });
++    let first = std::fs::read_to_string(first).unwrap();
++    let second = std::fs::read_to_string(second).unwrap();
++    assert!(first.starts_with("previous record\n"));
++    assert_eq!(first.strip_prefix("previous record\n").unwrap(), second);
++    assert!(second.contains("finished with error"));
++    assert!(second.chars().all(|c| !c.is_control() || c == '\n'));
++}
++
++#[test]
++fn file_logging_open_error_is_explicit_after_another_sink_started() {
++    let directory = tempfile::tempdir().unwrap();
++    let first = directory.path().join("first.log");
++    let output = Command::new(env!("CARGO_BIN_EXE_shoes"))
++        .arg("-l")
++        .arg(&first)
++        .arg("-l")
++        .arg(directory.path())
++        .arg("check")
++        .output()
++        .unwrap();
++    assert_eq!(output.status.code(), Some(1));
++    assert!(String::from_utf8_lossy(&output.stderr).contains("Failed to open log file"));
++    assert_eq!(std::fs::read(first).unwrap(), b"");
++}
+diff --git a/tests/process_contract.rs b/tests/process_contract.rs
+index 136f6bb..4258aa0 100644
+--- a/tests/process_contract.rs
++++ b/tests/process_contract.rs
+@@ -33,6 +33,10 @@ mod rule_sets;
+ #[path = "cases/process_contract/clash_api.rs"]
+ mod clash_api;
+ 
++#[cfg(unix)]
++#[path = "cases/process_contract/file_logging.rs"]
++mod file_logging;
++
+ #[cfg(unix)]
+ #[tokio::test]
+ async fn wireguard_reload_retains_invalid_candidates_rebinds_and_releases_on_exit() {

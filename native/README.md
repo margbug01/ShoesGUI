@@ -12,7 +12,7 @@
 
 ## 内核来源与构建
 
-基线：`https://github.com/cfal/shoes.git`，提交 `fb1fa5b8bbc5326c86a02fb4b1f17b37ca41d018`（源码版本号 0.3.4）。这是固定源码基线，不保证等同于此前随包的预编译二进制。`hysteria2.patch` 包含完整修改和新文件。
+基线：`https://github.com/cfal/shoes.git`，提交 `fb1fa5b8bbc5326c86a02fb4b1f17b37ca41d018`（源码版本号 0.3.4）。这是固定源码基线，不保证等同于此前随包的预编译二进制。`hysteria2.patch` 包含完整修改和新文件；`backport.patch` 在它之后应用，是从上游移植的几条稳定性修复，见下面「上游修复移植」。
 
 Windows 需要 MSVC C++ 构建工具、CMake、Git 和 Rust 1.95.0。在本仓库根目录的 Git Bash 执行：
 
@@ -20,6 +20,7 @@ Windows 需要 MSVC C++ 构建工具、CMake、Git 和 Rust 1.95.0。在本仓�
 git clone -c core.autocrlf=false https://github.com/cfal/shoes.git native/build
 git -C native/build checkout fb1fa5b8bbc5326c86a02fb4b1f17b37ca41d018
 git -C native/build apply ../hysteria2.patch
+git -C native/build apply ../backport.patch
 cd native/build
 cargo +1.95.0 test --locked hysteria2 --lib
 cargo +1.95.0 build --locked --release --bin shoes
@@ -29,7 +30,19 @@ Windows 必须在新克隆中保留 LF（上面的 `-c core.autocrlf=false` 会�
 
 构建成功后，退出 Shoes，先备份 `outputs/shoes.exe`，再将 `native/build/target/release/shoes.exe` 放到该位置。不要只更新 GUI，否则原版内核会拒绝 `hysteria2` 配置。GUI 的编译方法见主 README。
 
-macOS（Apple 芯片）需要 Xcode Command Line Tools、Git 和 Rust 1.95.0（`rustup toolchain install 1.95.0 --profile minimal`），不需要 CMake，也没有换行问题。在本仓库根目录执行上面同样的六条命令，产物是 `native/build/target/release/shoes`（Mach-O arm64）。把它复制到 `work/resources/darwin-arm64/shoes`，`mygo build` 会打进 `ShoesGUI.app/Contents/Resources/`。发版时 Windows 内核放在 `work/resources/windows-amd64/shoes.exe`，`mygo build` 会放到 `ShoesGUI.exe` 旁边，也会打进自动更新包。这两个位置都在 `.gitignore` 里，不进仓库。2026-10-27 在 macOS 上按此构建，`cargo +1.95.0 test --locked hysteria2 --lib` 14 项通过。
+macOS（Apple 芯片）需要 Xcode Command Line Tools、Git 和 Rust 1.95.0（`rustup toolchain install 1.95.0 --profile minimal`），不需要 CMake，也没有换行问题。在本仓库根目录执行上面同样的七条命令，产物是 `native/build/target/release/shoes`（Mach-O arm64）。把它复制到 `work/resources/darwin-arm64/shoes`，`mygo build` 会打进 `ShoesGUI.app/Contents/Resources/`。发版时 Windows 内核放在 `work/resources/windows-amd64/shoes.exe`，`mygo build` 会放到 `ShoesGUI.exe` 旁边，也会打进自动更新包。这两个位置都在 `.gitignore` 里，不进仓库。2026-10-27 在 macOS 上按此构建，`cargo +1.95.0 test --locked hysteria2 --lib` 14 项通过。
+
+## 上游修复移植（2026-11-08）
+
+上游已到 v0.3.7，但自带的 HY2 配置格式（`deny_unknown_fields`，没有 `download_mbps`）和本仓库的 HY2 补丁冲突，所以没有整体升级，只在 0.3.4 + `hysteria2.patch` 上 cherry-pick 了与高负载下卡死有关、能独立移植的三条（`backport.patch`，版本号仍是 0.3.4）：
+
+- #242 `4fcbd7c`：DNS 传输出错后解析器能恢复。
+- #224 `4ab9e87`：日志写文件挪到单独的后台线程，并给待写队列设上限，磁盘慢时不再卡住转发线程；输出格式不变。
+- #244 `09f09bf`：修复 TLS 写端丢失唤醒导致的连接挂起。
+
+冲突只出在测试文件上：去掉了 0.3.4 里还不存在的 `certificates` 测试模块；`crypto_tls_stream` 的内联测试换成上游拆出来的 `tests.rs`（测试函数逐个核对过，一致）。#219（换配置回滚、建连后释放路由状态）依赖 ACME 等四个大提交，没有移植。
+
+验证（macOS arm64）：`crypto_tls_stream` 14、`logging` 31、`hickory_resolver` 4、`hysteria2` 14 项通过，`process_contract file_logging` 3 项通过；全量 lib 测试有 5 项失败（`control::store` 的 `/private/var` 路径、四项 VLESS 加密测试绑定 127.0.0.2 报 AddrNotAvailable），只打 `hysteria2.patch` 的基线上同样这 5 项失败。GUI 带 `SHOES_TEST_KERNEL` 的全部测试通过。Windows 上没有构建和测试。
 
 ## 验证
 
