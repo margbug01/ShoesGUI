@@ -80,3 +80,36 @@ func TestTailLog(t *testing.T) {
 		t.Fatal("log file not removed")
 	}
 }
+
+// 日志读完超过上限就清空；内核是追加写，清空后写的照样读得到
+func TestTailLogTruncatesPastTheLimit(t *testing.T) {
+	old := kernelLogLimit
+	kernelLogLimit = 64
+	defer func() { kernelLogLimit = old }()
+	path := filepath.Join(t.TempDir(), "k.log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var mu sync.Mutex
+	var lines []string
+	flush := tailLog(path, &kernelLog{onLine: func(line string) {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+	}})
+	file.WriteString(strings.Repeat("填满上限的一行\n", 10))
+	time.Sleep(700 * time.Millisecond)
+	if info, _ := os.Stat(path); info.Size() != 0 {
+		t.Fatalf("超过上限没清空：%d 字节", info.Size())
+	}
+	file.WriteString("清空之后\n")
+	time.Sleep(700 * time.Millisecond)
+	flush()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) != 11 || lines[10] != "清空之后" {
+		t.Fatalf("%d 行：%q", len(lines), lines)
+	}
+}

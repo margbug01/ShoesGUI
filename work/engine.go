@@ -366,6 +366,9 @@ func spawnKernel(kernel, dir string, data []byte, out *kernelLog, watch bool) (c
 	return cmd, job, path, tailLog(logPath, &kernelLog{onLine: out.onLine}), nil
 }
 
+// kernelLogLimit 内核日志文件读完后超过这么大就清空
+var kernelLogLimit int64 = 8 << 20
+
 // tailLog 每 300 毫秒把日志文件新写的内容交给 out；返回的 flush 读完剩下的、删掉文件
 func tailLog(path string, out io.Writer) (flush func()) {
 	stop, finished := make(chan struct{}), make(chan struct{})
@@ -394,6 +397,13 @@ func tailLog(path string, out io.Writer) (flush func()) {
 				out.Write(buf[:n])
 				if err != nil || n == 0 {
 					break
+				}
+			}
+			// 内核不重启日志就一直涨（曾 9 天 39 MB）。内核是追加写，读完后清空，它接着从头写
+			// shortcut: 读完到清空之间内核刚写的几行会丢，只是日志，不值得为此加协调
+			if file != nil {
+				if offset, err := file.Seek(0, io.SeekCurrent); err == nil && offset > kernelLogLimit && os.Truncate(path, 0) == nil {
+					file.Seek(0, io.SeekStart)
 				}
 			}
 			if last {

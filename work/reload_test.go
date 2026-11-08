@@ -162,6 +162,38 @@ func TestKernelAcceptsWithManyOpenConnections(t *testing.T) {
 	c.Close()
 }
 
+// 真内核的日志超过上限被清空后，GUI 照样读得到它接着写的报错，文件也不再一直涨
+func TestKernelLogTruncatedAndStillRead(t *testing.T) {
+	old := kernelLogLimit
+	kernelLogLimit = 1
+	t.Cleanup(func() { kernelLogLimit = old }) // 比 runningKernel 的清理晚跑，内核停了再改回去
+	e, s := runningKernel(t, 0, "a0")
+	refused := func() string {
+		l, _ := net.Listen("tcp4", "127.0.0.1:0")
+		addr := l.Addr().String()
+		l.Close()
+		if c, err := tunnel(s.Port, addr); err == nil {
+			c.Close()
+		}
+		time.Sleep(time.Second) // 内核写日志、GUI 每 300 毫秒读一次并清空
+		return addr
+	}
+	first, second := refused(), refused()
+	for _, addr := range []string{first, second} {
+		_, logs, _, _ := e.snapshot()
+		if !slices.ContainsFunc(logs, func(l logEntry) bool { return strings.Contains(l.conn, addr) }) {
+			t.Fatalf("日志里没有连 %s 的报错", addr)
+		}
+	}
+	info, err := os.Stat(strings.TrimSuffix(e.config, ".yaml") + ".log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 { // 上限 1 字节，读完就清空；内核闲着不写日志
+		t.Fatal("内核日志没被清空：", info.Size())
+	}
+}
+
 // 换订阅、改节点：内核就地换配置，进程不换，开着的连接不断，新连接照常，新节点真的进了内核
 func TestReloadKeepsConnections(t *testing.T) {
 	e, s := runningKernel(t, 1, "a0", "a1", "a2")
