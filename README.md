@@ -196,7 +196,7 @@ go vet ./...
 go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build
 ```
 
-产物在 `outputs/darwin-arm64/`：`ShoesGUI.app` 和 dmg。内核会打进 `ShoesGUI.app/Contents/Resources/shoes`，许可证也一起打进去；只想要 app 就加 `-skip-dmg`。没有配开发者证书时用的是 ad-hoc 签名，本机能直接用，发给别人要按上面常见问题里的办法放行。
+产物在 `outputs/build.noindex/darwin-arm64/`：`ShoesGUI.app` 和 dmg。内核会打进 `ShoesGUI.app/Contents/Resources/shoes`，许可证也一起打进去；只想要 app 就加 `-skip-dmg`。没有配开发者证书时用的是 ad-hoc 签名，本机能直接用，发给别人要按上面常见问题里的办法放行。
 
 ### 发版
 
@@ -214,8 +214,8 @@ go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build
    ```
 
 5. 在 GitHub 上建 `v<版本>` 的 Release，先存成草稿，把附件都传上去，确认后再发布并设为 Latest。应用读的是最新 Release 里的清单，草稿对它不可见，所以不会出现清单已经能读到、压缩包还没传完的情况。
-   - `outputs/darwin-arm64/`：dmg（改名为 `MyShoes-v<版本>-macos-arm64.dmg`）、`shoesgui-<版本>-darwin-arm64.tar.gz`、`*.delta`、`update-darwin-arm64.json`
-   - `outputs/windows-amd64/`：把 `ShoesGUI.exe`、`shoes.exe`、`LICENSE`、`licenses/`、`使用说明.md` 放进 `Shoes/` 文件夹打成 `MyShoes-v<版本>-windows-x64.zip`，另附单独的 `ShoesGUI.exe`；再加上 `shoesgui-<版本>-windows-amd64.tar.gz`、`*.delta`、`update-windows-amd64.json`
+   - `outputs/build.noindex/darwin-arm64/`：dmg（改名为 `MyShoes-v<版本>-macos-arm64.dmg`）、`shoesgui-<版本>-darwin-arm64.tar.gz`、`*.delta`、`update-darwin-arm64.json`
+   - `outputs/build.noindex/windows-amd64/`：把 `ShoesGUI.exe`、`shoes.exe`、`LICENSE`、`licenses/`、`使用说明.md` 放进 `Shoes/` 文件夹打成 `MyShoes-v<版本>-windows-x64.zip`，另附单独的 `ShoesGUI.exe`；再加上 `shoesgui-<版本>-windows-amd64.tar.gz`、`*.delta`、`update-windows-amd64.json`
 
 `*.delta` 是从前几个版本到这一版的增量包，`mygo build` 会读已发布的版本自动做出来，应用更新时优先下载它，通常只有整包的零头。
 
