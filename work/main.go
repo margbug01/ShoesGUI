@@ -499,6 +499,9 @@ func main() {
 			Content:              ui.View(a.view),
 		})
 		a.createTray()
+		if mygo.App.WasOpenedAtLogin() {
+			mygo.App.Dock.Hide() // 开机自启只在托盘里，程序坞不留图标
+		}
 		a.window.OnHide(func() { a.dashOn.Store(false); a.connsOn.Store(false) })
 		go a.watchTraffic()
 		go a.watchConnections()
@@ -510,6 +513,7 @@ func main() {
 			if !a.quitting {
 				event.PreventDefault()
 				a.window.Hide()
+				mygo.App.Dock.Hide() // 缩到托盘时程序坞图标也收起来，showWindow 再放回去
 				a.hintTray()
 				return
 			}

@@ -125,6 +125,7 @@ func (a *application) showWindow() {
 	if a.window == nil {
 		return
 	}
+	mygo.App.Dock.Show()
 	a.window.Show()
 	a.window.Restore()
 	a.window.Focus()
