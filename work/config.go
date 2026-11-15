@@ -145,6 +145,7 @@ type runtimeConfig struct {
 	APIPort  int
 	Secret   string
 	RulesDir string
+	Hosts    []string // 系统 hosts 里的域名，走直连才会由本机解析、照 hosts 的地址连
 }
 
 func defaultSettings() Settings { return Settings{Selected: -1, Port: "10808"} }
@@ -350,6 +351,45 @@ func tlsALPN(n Node) []string {
 	return nil
 }
 
+// hostsNames 取 hosts 文件里的域名（去重、小写）。内核碰到不合规的域名会整份配置报错，这里不合规的直接跳过
+func hostsNames(text string) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(text, "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		fields := strings.Fields(line)
+		if len(fields) < 2 || net.ParseIP(fields[0]) == nil {
+			continue
+		}
+		for _, name := range fields[1:] {
+			name = strings.TrimSuffix(strings.ToLower(name), ".")
+			if !seen[name] && validHostName(name) {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// validHostName 和内核 rules/domain.rs 的 normalize 同一套要求：ASCII 字母数字、- 和 _，每段 1-63，总长不过 253，且不是 IP
+func validHostName(name string) bool {
+	if len(name) == 0 || len(name) > 253 || net.ParseIP(name) != nil {
+		return false
+	}
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 var privateRanges = []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10"}
 
 // generateConfig 把全部节点放进「节点选择」，再用「国内」「其他」两个选择组实现出站模式，切模式只需 PUT
@@ -380,6 +420,9 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 		return rule
 	}
 	rules := []any{}
+	if len(rt.Hosts) > 0 {
+		rules = append(rules, route(map[string]any{"domain": rt.Hosts}, groupDirect, true))
+	}
 	for _, entry := range s.DirectDomains {
 		domain := strings.ToLower(strings.TrimSpace(entry))
 		if len(domain) == 0 || len(domain) > 253 || net.ParseIP(domain) != nil {

@@ -144,6 +144,22 @@ func logged(e *engine, text string) bool {
 	return slices.ContainsFunc(logs, func(l logEntry) bool { return strings.Contains(l.text, text) })
 }
 
+// issue #3：hosts 里的名字（这里用 localhost）全局模式下也直连、按 hosts 解析，不交给节点（测试节点没在听，交过去就不通）
+func TestKernelHostsNamesGoDirect(t *testing.T) {
+	if data, _ := os.ReadFile(hostsFile); !slices.Contains(hostsNames(string(data)), "localhost") {
+		t.Skip("系统 hosts 里没有 localhost")
+	}
+	e, s := runningKernel(t, 0, "a0")
+	s.Mode = "global"
+	apply(e, s)
+	_, port, _ := net.SplitHostPort(echoAddr(t))
+	c, err := tunnel(s.Port, "localhost:"+port)
+	if err != nil {
+		t.Fatal("hosts 里的名字没走直连：", err)
+	}
+	c.Close()
+}
+
 // 连接一多内核也得接着收新连接：macOS 上内核曾被限在 256 个文件，300 条长连接（内核里各占进出两个）就 Too many open files
 func TestKernelAcceptsWithManyOpenConnections(t *testing.T) {
 	_, s := runningKernel(t, 0, "a0")

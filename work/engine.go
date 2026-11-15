@@ -280,8 +280,11 @@ func (e *engine) reloadLine(line string) {
 	}
 }
 
-// configFor 生成内核配置。数据目录里的 direct-domains.txt 每次都重新读
+// configFor 生成内核配置。数据目录里的 direct-domains.txt 和系统 hosts 每次都重新读
 func (e *engine) configFor(s Settings, rt runtimeConfig) ([]byte, error) {
+	if hosts, err := os.ReadFile(hostsFile); err == nil { // 读不到就当没有，不挡连接
+		rt.Hosts = hostsNames(string(hosts))
+	}
 	directFile := filepath.Join(e.dir, "direct-domains.txt")
 	if domains, readErr := os.ReadFile(directFile); readErr == nil {
 		s.DirectDomains = append([]string(nil), s.DirectDomains...)

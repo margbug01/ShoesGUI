@@ -99,6 +99,31 @@ func TestDirectDomains(t *testing.T) {
 	}
 }
 
+// issue #3：hosts 里的域名要走直连，由本机按 hosts 解析，而且排在所有规则前面、全局模式也一样
+func TestHostsDirect(t *testing.T) {
+	hosts := "# comment\n127.0.0.1\tlocalhost\n::1 localhost\n10.0.0.5 NAS.Home. nas # trailing\n0.0.0.0 ads.example.com\nbad line\n1.2.3.4 ok_name.dev 中文.com a..b 5.6.7.8\n"
+	want := []string{"localhost", "nas.home", "nas", "ads.example.com", "ok_name.dev"}
+	if got := hostsNames(hosts); !reflect.DeepEqual(got, want) {
+		t.Fatalf("hostsNames = %q", got)
+	}
+	rt := testRuntime
+	rt.Hosts = want
+	for _, mode := range []string{"", "global"} {
+		data, err := generateConfig(Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", Mode: mode}, rt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var entries []map[string]any
+		if err := json.Unmarshal(data, &entries); err != nil {
+			t.Fatal(err)
+		}
+		rule := entries[5]["rules"].([]any)[0].(map[string]any)
+		if rule["client_chain"] != groupDirect || rule["no_resolve"] != true || len(rule["masks"].(map[string]any)["domain"].([]any)) != len(want) {
+			t.Fatalf("hosts rule = %v", rule)
+		}
+	}
+}
+
 func TestKernelNames(t *testing.T) {
 	nodes := []Node{{Name: "香港"}, {Name: "香港"}, {Name: ""}, {Name: "direct"}, {Name: groupSelect}, {Name: "a\tb\x00"}, {Name: strings.Repeat("长", 200)}}
 	names := kernelNames(nodes)

@@ -24,6 +24,8 @@ const kernelHint = "一般会自动找到，将 shoes 放在应用旁边或应�
 
 var kernelExtensions = []string{"*"}
 
+const hostsFile = "/etc/hosts"
+
 func dataDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

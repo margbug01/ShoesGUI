@@ -19,6 +19,8 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+var hostsFile = filepath.Join(os.Getenv("SystemRoot"), `System32\drivers\etc\hosts`)
+
 func dataDir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
