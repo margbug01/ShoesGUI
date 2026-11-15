@@ -43,6 +43,8 @@ type application struct {
 	flowSearchFocused, logSearchFocused bool
 	focusLogSearch                      bool // 日志页按了 ⌘F，下一帧把焦点放进这一块的搜索框
 	flowList, logList                   ui.ListState
+	ruleKind, ruleAction, ruleDraft     string // 设置页加规则那一行：类型、走法（下拉框里的字）和输入的内容
+	ruleError                           string
 	addingGroup                         bool
 	renaming                            string // 正在改名的分组
 	groupDelete                         string // 正在确认删除的分组
@@ -123,6 +125,29 @@ func (a *application) save(next Settings) bool {
 	a.settings = next
 	a.errorText = ""
 	return true
+}
+
+// importLegacyDirect 旧版靠数据目录里的 direct-domains.txt 加直连域名，现在并进「设置 › 自定义规则」。
+// 存下以后才把原文件改名留底；存不下就不动它，下次打开再并（重复的不会多加）
+func (a *application) importLegacyDirect(dir string) {
+	legacy := filepath.Join(dir, "direct-domains.txt")
+	text, err := os.ReadFile(legacy)
+	if err != nil || !a.storageOK {
+		return
+	}
+	next := a.settings
+	rules, bad := importDirectDomains(next.Rules, string(text))
+	next.Rules = rules
+	if saveEncrypted(a.settingsPath, next) != nil {
+		return
+	}
+	a.settings = next
+	if os.Rename(legacy, legacy+".imported") == nil {
+		a.engine.event("", "direct-domains.txt 里的直连域名已并进「设置 › 自定义规则」，原文件改名为 direct-domains.txt.imported")
+	}
+	if len(bad) > 0 {
+		a.engine.event("", "direct-domains.txt 里这几行不是域名，没有并进来："+strings.Join(bad, "、"))
+	}
 }
 
 // commit 保存节点、端口或内核这类要重写配置的改动。内核在后台换配置：节点变了就地换，连接不断；改了端口或内核才重启（系统代理保持）
@@ -447,6 +472,7 @@ func main() {
 	for name, ms := range a.settings.Delays { // 上次的测速结果，重开也看得到
 		a.delays[name] = ms
 	}
+	a.importLegacyDirect(dir)
 	executable, _ := os.Executable()
 	if kernel := chooseKernel(a.settings.Kernel, kernelCandidates(executable), validKernel, bundledKernel, pathKernel); kernel != a.settings.Kernel {
 		migrated := a.settings.Kernel != ""

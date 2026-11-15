@@ -280,22 +280,10 @@ func (e *engine) reloadLine(line string) {
 	}
 }
 
-// configFor 生成内核配置。数据目录里的 direct-domains.txt 和系统 hosts 每次都重新读
+// configFor 生成内核配置。系统 hosts 每次都重新读
 func (e *engine) configFor(s Settings, rt runtimeConfig) ([]byte, error) {
 	if hosts, err := os.ReadFile(hostsFile); err == nil { // 读不到就当没有，不挡连接
 		rt.Hosts = hostsNames(string(hosts))
-	}
-	directFile := filepath.Join(e.dir, "direct-domains.txt")
-	if domains, readErr := os.ReadFile(directFile); readErr == nil {
-		s.DirectDomains = append([]string(nil), s.DirectDomains...)
-		for _, line := range strings.Split(strings.TrimPrefix(string(domains), "\ufeff"), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				s.DirectDomains = append(s.DirectDomains, line)
-			}
-		}
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return nil, fmt.Errorf("读取直连规则文件失败: %w", readErr)
 	}
 	return generateConfig(s, rt)
 }

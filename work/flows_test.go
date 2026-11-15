@@ -170,10 +170,18 @@ func TestFlowsShowWhichWayEachDomainWent(t *testing.T) {
 	}
 }
 
-// direct-domains.txt 里的域名，内核报成 "example.com"，连接记录里写「自定义直连」
-func TestFlowRuleForCustomDirect(t *testing.T) {
-	if got := ruleLabel(`mixed-in (root): "ticket.example.com"`); got != "自定义直连" {
-		t.Fatalf("got %q", got)
+// 自定义规则和 hosts，内核报成一个谓词对象（真内核里抓的原样），连接记录里写成人话
+func TestFlowRuleForCustomRules(t *testing.T) {
+	for payload, want := range map[string]string{
+		`mixed-in (root): {"domain_suffix":["example.com"]}`:   "自定义：example.com",
+		`mixed-in (root): {"domain":["www.x.org"]}`:            "自定义：www.x.org",
+		`mixed-in (root): {"domain_keyword":["ads"]}`:          "自定义：ads",
+		`mixed-in (root): {"ip_cidr":["127.0.0.1/32"]}`:        "自定义：127.0.0.1/32",
+		`mixed-in (root): {"domain":["localhost","nas.home"]}`: "hosts",
+	} {
+		if got := ruleLabel(payload); got != want {
+			t.Errorf("ruleLabel(%s) = %q, want %q", payload, got, want)
+		}
 	}
 	if got := ruleLabel(`mixed-in (root): "0.0.0.0/0"`); got != "其余" {
 		t.Fatalf("catch-all became %q", got)

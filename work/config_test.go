@@ -66,36 +66,79 @@ func TestGenerateConfig(t *testing.T) {
 	}
 }
 
-func TestDirectDomains(t *testing.T) {
-	for _, mode := range []string{"", "global", "direct"} {
-		settings := Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", Mode: mode, DirectDomains: []string{"Example.COM", "only.example.net"}}
-		data, err := generateConfig(settings, testRuntime)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var entries []map[string]any
-		if err := json.Unmarshal(data, &entries); err != nil {
-			t.Fatal(err)
-		}
-		rules := entries[5]["rules"].([]any)
-		if len(rules) != 6 {
-			t.Fatal("default rules changed")
-		}
-		for index, mask := range []string{"example.com", "only.example.net"} {
-			want := map[string]any{"masks": mask, "action": "allow", "client_chain": groupDirect, "no_resolve": true}
-			if !reflect.DeepEqual(rules[index], want) {
-				t.Fatal("direct domain rule lost priority or scope")
-			}
+// issue #5：自定义规则按用户的顺序排在最前面（hosts 之前），三种走法各对应内核的写法
+func TestCustomRules(t *testing.T) {
+	rt := testRuntime
+	rt.Hosts = []string{"nas"}
+	s := Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", Rules: []Rule{
+		{"suffix", "Example.COM", "direct"}, {"domain", "www.x.org", "proxy"}, {"keyword", "ads", "reject"}, {"ip", "1.2.3.4", "direct"},
+	}}
+	data, err := generateConfig(s, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(data, &entries); err != nil {
+		t.Fatal(err)
+	}
+	rules := entries[5]["rules"].([]any)
+	if len(rules) != 4+1+4 {
+		t.Fatalf("%d rules", len(rules))
+	}
+	want := []map[string]any{
+		{"masks": map[string]any{"domain_suffix": []any{"example.com"}}, "action": "allow", "client_chain": groupDirect, "no_resolve": true},
+		{"masks": map[string]any{"domain": []any{"www.x.org"}}, "action": "allow", "client_chain": groupOther, "no_resolve": true},
+		{"masks": map[string]any{"domain_keyword": []any{"ads"}}, "action": "block", "no_resolve": true},
+		{"masks": map[string]any{"ip_cidr": []any{"1.2.3.4/32"}}, "action": "allow", "client_chain": groupDirect, "no_resolve": true},
+	}
+	for i, w := range want {
+		if !reflect.DeepEqual(rules[i], w) {
+			t.Fatalf("rule %d = %v", i, rules[i])
 		}
 	}
-	for _, domain := range []string{"", ".", "*.example.com", "https://example.com", "example.com:443", "a..com", "-a.com", "a-.com", "127.0.0.1", "a/com", "a\n.com", strings.Repeat("a", 64) + ".com"} {
-		if _, err := generateConfig(Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", DirectDomains: []string{domain}}, testRuntime); err == nil {
-			t.Fatalf("accepted invalid direct domain %q", domain)
+	if rules[4].(map[string]any)["masks"].(map[string]any)["domain"] == nil {
+		t.Fatal("hosts rule should follow the custom rules")
+	}
+	// 存进设置的规则被改坏了（比如手改了文件），要说是哪一条，不能悄悄生成内核不认的配置
+	s.Rules = []Rule{{"suffix", "https://bad.example.com", "direct"}}
+	if _, err := generateConfig(s, rt); err == nil || !strings.Contains(err.Error(), "https://bad.example.com") {
+		t.Fatalf("error does not name the bad rule: %v", err)
+	}
+}
+
+func TestNormalizeRule(t *testing.T) {
+	good := map[[2]string]string{
+		{"suffix", " *.Example.com. "}: "example.com", {"suffix", "+.a.b"}: "a.b", {"suffix", ".a.b"}: "a.b", {"suffix", "nas"}: "nas",
+		{"domain", "WWW.x.org"}: "www.x.org", {"keyword", "Google"}: "google",
+		{"ip", "1.2.3.4"}: "1.2.3.4/32", {"ip", "1.2.3.9/24"}: "1.2.3.0/24", {"ip", "2001:db8::1"}: "2001:db8::1/128", {"ip", "2001:db8::/32"}: "2001:db8::/32", {"ip", "fe80::1%en0"}: "fe80::1/128",
+	}
+	for in, want := range good {
+		if got, err := normalizeRule(in[0], in[1]); err != nil || got != want {
+			t.Errorf("normalizeRule%q = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	// 写错了要说是哪一个，不然几十行里找不到
-	if _, err := generateConfig(Settings{Nodes: []Node{sampleNode("HTTP")}, Port: "10808", DirectDomains: []string{"ok.example.com", "https://bad.example.com"}}, testRuntime); err == nil || !strings.Contains(err.Error(), "https://bad.example.com") {
-		t.Fatalf("error does not name the bad domain: %v", err)
+	for _, in := range [][2]string{
+		{"suffix", ""}, {"suffix", "https://example.com"}, {"suffix", "example.com:443"}, {"suffix", "a..com"}, {"suffix", "1.2.3.4"}, {"suffix", "中文.com"},
+		{"domain", "a/b"}, {"domain", strings.Repeat("a", 64) + ".com"}, {"keyword", ""}, {"keyword", "a b"}, {"keyword", "广告"},
+		{"ip", "1.2.3"}, {"ip", "1.2.3.4/33"}, {"ip", "example.com"}, {"app", "x"},
+	} {
+		if got, err := normalizeRule(in[0], in[1]); err == nil {
+			t.Errorf("normalizeRule%q accepted as %q", in, got)
+		}
+	}
+}
+
+// 旧版 direct-domains.txt 并进自定义规则：注释、空行跳过，坏行报出来，重复并不会多出一条
+func TestImportDirectDomains(t *testing.T) {
+	existing := []Rule{{"suffix", "a.com", "proxy"}}
+	text := "\ufeff# 注释\r\n\r\nA.com\r\nb.org\nhttps://bad\nb.org\n"
+	rules, bad := importDirectDomains(existing, text)
+	want := []Rule{{"suffix", "a.com", "direct"}, {"suffix", "b.org", "direct"}}
+	if !reflect.DeepEqual(rules, want) || !reflect.DeepEqual(bad, []string{"https://bad"}) {
+		t.Fatalf("rules %v bad %q", rules, bad)
+	}
+	if existing[0].Action != "proxy" {
+		t.Fatal("addRule changed the caller's slice")
 	}
 }
 
@@ -201,7 +244,7 @@ func TestConfigEscapesCredentials(t *testing.T) {
 
 func TestEncryptedPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.dpapi")
-	want := Settings{Nodes: []Node{sampleNode("Trojan")}, Selected: 0, Port: "10808", DirectDomains: []string{"example.com", "only.example.net"}}
+	want := Settings{Nodes: []Node{sampleNode("Trojan")}, Selected: 0, Port: "10808", Rules: []Rule{{"suffix", "example.com", "direct"}, {"ip", "1.2.3.0/24", "reject"}}}
 	if err := saveEncrypted(path, want); err != nil {
 		t.Fatal(err)
 	}

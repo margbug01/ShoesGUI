@@ -433,6 +433,7 @@ func (a *application) settingsView(c *ui.Context) {
 			}
 		})
 	})
+	a.rulesSection(c)
 	section(c, "高级", func() {
 		path := a.kernelDraft
 		if path == "" {

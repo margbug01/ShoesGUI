@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,9 +89,20 @@ func ruleLabel(payload string) string {
 	case strings.Contains(payload, `"0.0.0.0/0"`):
 		return "其余"
 	}
-	// direct-domains.txt 里的一行，内核原样报成 "example.com"
-	if i := strings.LastIndex(payload, `: "`); i >= 0 && strings.HasSuffix(payload, `"`) && !strings.Contains(payload[i:], "/") {
-		return "自定义直连"
+	// 自定义规则和 hosts：内核报成 {"domain_suffix":["example.com"]} 这样一个谓词
+	if _, body, ok := strings.Cut(payload, "): {"); ok {
+		var masks map[string][]string
+		if json.Unmarshal([]byte("{"+body), &masks) == nil && len(masks) == 1 {
+			for kind, values := range masks {
+				// shortcut: hosts 里只有一个域名时和一条「完整域名」规则长得一样，会写成「自定义」；要分清就让记录拿设置里的规则比对
+				if kind == "domain" && len(values) > 1 {
+					return "hosts"
+				}
+				if len(values) == 1 {
+					return "自定义：" + values[0]
+				}
+			}
+		}
 	}
 	return ""
 }

@@ -160,6 +160,41 @@ func TestKernelHostsNamesGoDirect(t *testing.T) {
 	c.Close()
 }
 
+// issue #5：自定义规则就地换配置生效，排在局域网、hosts 前面。测试节点没在听，交给节点就连不通
+func TestKernelCustomRules(t *testing.T) {
+	e, s := runningKernel(t, 0, "a0")
+	echo := echoAddr(t)
+	for _, tc := range []struct {
+		rules []Rule
+		ok    bool
+	}{
+		{[]Rule{{"ip", "127.0.0.1", "proxy"}}, false}, // 盖过「局域网直连」
+		{[]Rule{{"ip", "127.0.0.0/8", "reject"}}, false},
+		{nil, true},
+	} {
+		s.Rules = tc.rules
+		if !apply(e, s) {
+			t.Fatalf("%v: kernel restarted instead of reloading", tc.rules)
+		}
+		c, err := tunnel(s.Port, echo)
+		if (err == nil) != tc.ok {
+			t.Fatalf("%v: got err %v", tc.rules, err)
+		}
+		if c != nil {
+			c.Close()
+		}
+	}
+	if data, _ := os.ReadFile(hostsFile); slices.Contains(hostsNames(string(data)), "localhost") {
+		_, port, _ := net.SplitHostPort(echo)
+		s.Rules = []Rule{{"suffix", "localhost", "reject"}} // 盖过 hosts 直连
+		apply(e, s)
+		if c, err := tunnel(s.Port, "localhost:"+port); err == nil {
+			c.Close()
+			t.Fatal("reject rule lost to hosts")
+		}
+	}
+}
+
 // 连接一多内核也得接着收新连接：macOS 上内核曾被限在 256 个文件，300 条长连接（内核里各占进出两个）就 Too many open files
 func TestKernelAcceptsWithManyOpenConnections(t *testing.T) {
 	_, s := runningKernel(t, 0, "a0")

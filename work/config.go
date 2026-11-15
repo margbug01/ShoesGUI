@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -45,8 +47,9 @@ type Node struct {
 }
 
 type Settings struct {
-	Groups        []string `json:",omitempty"`
-	DirectDomains []string `json:",omitempty"`
+	Groups []string `json:",omitempty"`
+	// Rules 用户自己加的规则，按顺序排在所有规则前面
+	Rules []Rule `json:",omitempty"`
 	// Subscriptions 分组 → 订阅地址，「更新订阅」照它重新拉。未分组的键是 ""
 	Subscriptions map[string]string `json:",omitempty"`
 	Nodes         []Node
@@ -63,6 +66,97 @@ type Settings struct {
 	Delays map[string]int `json:",omitempty"`
 	// SkipUpdateCheck 不自动检查更新（默认打开时和之后每 12 小时查一次）
 	SkipUpdateCheck bool `json:",omitempty"`
+}
+
+// Rule 一条自定义规则。Value 存的是 normalizeRule 整理过的写法
+type Rule struct {
+	Kind   string // ruleKinds 的 key
+	Value  string
+	Action string // ruleActions 的 key
+}
+
+// ruleKinds 自定义规则能按什么匹配，mask 是内核里对应的写法
+var ruleKinds = []struct{ key, label, mask, hint string }{
+	{"suffix", "域名后缀", "domain_suffix", "example.com，包括所有子域名"},
+	{"domain", "完整域名", "domain", "www.example.com，只算这一个"},
+	{"keyword", "关键字", "domain_keyword", "域名里含有就算，比如 google"},
+	{"ip", "IP 段", "ip_cidr", "1.2.3.0/24 或单个 IP，只管直接用 IP 连的"},
+}
+
+// ruleActions 命中以后怎么走。「代理」交给「其他」组，所以直连模式下也不走节点；「直连」「拒绝」三种模式都算
+var ruleActions = []struct{ key, label string }{{"direct", "直连"}, {"proxy", "代理"}, {"reject", "拒绝"}}
+
+func ruleKindIndex(key string) int {
+	return max(slices.IndexFunc(ruleKinds, func(k struct{ key, label, mask, hint string }) bool { return k.key == key }), 0)
+}
+
+func ruleActionIndex(key string) int {
+	return max(slices.IndexFunc(ruleActions, func(k struct{ key, label string }) bool { return k.key == key }), 0)
+}
+
+// normalizeRule 把输入整理成内核认的写法：小写，去掉后缀前面顺手写的 *. +. .，单个 IP 变成 /32、/128。
+// 内核碰到一条写不对的整份配置都不要，所以存之前就拦住
+func normalizeRule(kind, value string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(value))
+	switch kind {
+	case "suffix", "domain":
+		if kind == "suffix" {
+			for _, prefix := range []string{"*.", "+.", "."} {
+				v = strings.TrimPrefix(v, prefix)
+			}
+		}
+		v = strings.TrimSuffix(v, ".")
+		if !validHostName(v) {
+			return "", fmt.Errorf("「%s」不是域名：只写域名，比如 example.com，不带协议、端口或路径", value)
+		}
+	case "keyword":
+		if v == "" || strings.Trim(v, "abcdefghijklmnopqrstuvwxyz0123456789-._") != "" {
+			return "", fmt.Errorf("关键字「%s」无效：只能有字母、数字、- 和 .", value)
+		}
+	case "ip":
+		prefix, err := netip.ParsePrefix(v)
+		if addr, addrErr := netip.ParseAddr(v); addrErr == nil {
+			prefix, err = netip.PrefixFrom(addr, addr.BitLen()), nil
+		}
+		if err != nil || !prefix.IsValid() {
+			return "", fmt.Errorf("「%s」不是 IP 或 IP 段，比如 1.2.3.4 或 1.2.3.0/24", value)
+		}
+		v = prefix.Masked().String()
+	default:
+		return "", fmt.Errorf("不认识的规则类型「%s」", kind)
+	}
+	return v, nil
+}
+
+// addRule 加一条规则：同类型同写法的已经有了就只改走法，不重复加
+func addRule(rules []Rule, r Rule) []Rule {
+	rules = slices.Clone(rules)
+	for i, old := range rules {
+		if old.Kind == r.Kind && old.Value == r.Value {
+			rules[i] = r
+			return rules
+		}
+	}
+	return append(rules, r)
+}
+
+// importDirectDomains 旧版的 direct-domains.txt（一行一个直连域名，含子域名）并进自定义规则。
+// 返回并完的规则，和不是域名、没并进来的行
+func importDirectDomains(rules []Rule, text string) ([]Rule, []string) {
+	var bad []string
+	for _, line := range strings.Split(strings.TrimPrefix(text, "\ufeff"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		value, err := normalizeRule("suffix", line)
+		if err != nil {
+			bad = append(bad, line)
+			continue
+		}
+		rules = addRule(rules, Rule{"suffix", value, "direct"})
+	}
+	return rules, bad
 }
 
 // 内核里的组名。节点名不能和它们重复
@@ -420,25 +514,24 @@ func generateConfig(s Settings, rt runtimeConfig) ([]byte, error) {
 		return rule
 	}
 	rules := []any{}
+	for _, r := range s.Rules { // 用户自己定的最优先，连 hosts 都排在后面
+		value, err := normalizeRule(r.Kind, r.Value)
+		if err != nil {
+			return nil, fmt.Errorf("自定义规则：%v", err)
+		}
+		// IP 段不替域名先解析：规则在最前面，解析的话每条连接都要先在本机查一次 DNS
+		masks := map[string]any{ruleKinds[ruleKindIndex(r.Kind)].mask: []string{value}}
+		switch r.Action {
+		case "proxy":
+			rules = append(rules, route(masks, groupOther, true))
+		case "reject":
+			rules = append(rules, map[string]any{"masks": masks, "action": "block", "no_resolve": true})
+		default:
+			rules = append(rules, route(masks, groupDirect, true))
+		}
+	}
 	if len(rt.Hosts) > 0 {
 		rules = append(rules, route(map[string]any{"domain": rt.Hosts}, groupDirect, true))
-	}
-	for _, entry := range s.DirectDomains {
-		domain := strings.ToLower(strings.TrimSpace(entry))
-		if len(domain) == 0 || len(domain) > 253 || net.ParseIP(domain) != nil {
-			return nil, fmt.Errorf("直连域名「%s」无效：只写域名，比如 example.com，不带协议、端口、路径或 *.", entry)
-		}
-		for _, label := range strings.Split(domain, ".") {
-			if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-				return nil, fmt.Errorf("直连域名「%s」无效：只写域名，比如 example.com，不带协议、端口、路径或 *.", entry)
-			}
-			for _, char := range label {
-				if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
-					return nil, fmt.Errorf("直连域名「%s」无效：只写域名，比如 example.com，不带协议、端口、路径或 *.", entry)
-				}
-			}
-		}
-		rules = append(rules, route(domain, groupDirect, true))
 	}
 	rules = append(rules,
 		route(privateRanges, groupDirect, true),

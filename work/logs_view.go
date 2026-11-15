@@ -171,6 +171,7 @@ func (a *application) flowRow(c *ui.Context, h hostFlow, names map[string]string
 		if m.Item("只看这个域名").Chosen() {
 			a.flowSearch, a.flowFilter = h.Host, 0
 		}
+		a.ruleMenu(m, h.Host)
 		if h.Active > 0 {
 			m.Separator()
 			if m.Item(fmt.Sprintf("断开这 %d 条连接", h.Active)).Chosen() {
