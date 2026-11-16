@@ -3,6 +3,8 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"runtime"
+	"strings"
 
 	"github.com/egoist/mygo"
 )
@@ -13,16 +15,39 @@ var trayOnPNG []byte
 //go:embed assets/tray-off.png
 var trayOffPNG []byte
 
-// trayIcon 托盘图标：加粗的 S，已接管绿底、没接管灰底。和应用图标同一条 S，但去掉了虚线和点，16px 也认得出
-func trayIcon(on bool) []byte {
-	if on {
-		return trayOnPNG
+//go:embed assets/tray-template-on.png
+var trayTemplateOnPNG []byte
+
+//go:embed assets/tray-template-off.png
+var trayTemplateOffPNG []byte
+
+// trayIcon 托盘图标：加粗的 S，已接管绿底、没接管灰底。和应用图标同一条 S，但去掉了虚线和点，16px 也认得出。
+// macOS 菜单栏用同形状的黑白模板图（系统按浅色/深色栏着色，和别的应用一致），没接管时半透明
+func trayIcon(on bool) (png []byte, template bool) {
+	if runtime.GOOS == "darwin" {
+		if on {
+			return trayTemplateOnPNG, true
+		}
+		return trayTemplateOffPNG, true
 	}
-	return trayOffPNG
+	if on {
+		return trayOnPNG, false
+	}
+	return trayOffPNG, false
+}
+
+// traySpeed 菜单栏上的网速。只有数字等宽，换单位（K→M）宽度会变，所以固定用 MB/s、两位小数，
+// 不足的位用和数字一样宽的 figure space 补齐，菜单栏项宽度就不再跟着网速伸缩
+func traySpeed(r rate) string {
+	mb := func(n int64) string {
+		return strings.ReplaceAll(fmt.Sprintf("%6.2f", min(float64(n)/(1<<20), 999.99)), " ", "\u2007")
+	}
+	return "↑" + mb(r.up) + " ↓" + mb(r.down) + " MB/s"
 }
 
 func (a *application) createTray() {
-	tray, err := mygo.NewTray(mygo.TrayOptions{Icon: trayIcon(false), ToolTip: "MyShoes"})
+	icon, template := trayIcon(false)
+	tray, err := mygo.NewTray(mygo.TrayOptions{Icon: icon, IconIsTemplate: template, ToolTip: "MyShoes"})
 	if err != nil {
 		a.engine.event("", "托盘图标创建失败")
 		return
@@ -41,14 +66,26 @@ func (a *application) createTray() {
 			modeItems = append(modeItems, &mygo.MenuItem{Label: m.label, Type: mygo.MenuItemRadio, Checked: a.settings.Mode == key,
 				Click: func(*mygo.MenuItem, *mygo.Window) { a.setMode(key) }})
 		}
-		menu := mygo.NewMenu([]*mygo.MenuItem{
+		items := []*mygo.MenuItem{
 			{Label: "打开 MyShoes", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
 			{Label: toggle, Disabled: a.busy.Load() || len(a.settings.Nodes) == 0, Click: func(*mygo.MenuItem, *mygo.Window) { a.toggleConnect() }},
 			{Label: "节点", Submenu: a.trayNodes(), Disabled: len(a.settings.Nodes) == 0},
 			{Label: "出站模式", Submenu: modeItems},
-			mygo.Separator(),
-			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { a.quit() }},
-		})
+		}
+		if runtime.GOOS == "darwin" { // 托盘旁的文字只有 macOS 菜单栏能显示
+			items = append(items, &mygo.MenuItem{Label: "在菜单栏显示网速", Type: mygo.MenuItemCheckbox, Checked: a.settings.TraySpeed,
+				Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.window.Update(func() {
+						next := a.settings
+						next.TraySpeed = !next.TraySpeed
+						if a.save(next) {
+							a.syncTray()
+						}
+					})
+				}})
+		}
+		items = append(items, mygo.Separator(), &mygo.MenuItem{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { a.quit() }})
+		menu := mygo.NewMenu(items)
 		tray.SetMenu(menu)
 		defer tray.SetMenu(nil)
 		tray.PopUpMenu()
@@ -87,7 +124,7 @@ func (a *application) trayNodes() []*mygo.MenuItem {
 	return out
 }
 
-// syncTray 只在状态变了时换图标和提示
+// syncTray 只在状态变了时换图标、提示和菜单栏网速
 func (a *application) syncTray() {
 	if a.tray == nil {
 		return
@@ -102,11 +139,23 @@ func (a *application) syncTray() {
 	}
 	if proxy != a.trayOn {
 		a.trayOn = proxy
-		a.tray.SetIcon(trayIcon(proxy), false)
+		a.tray.SetIcon(trayIcon(proxy))
 	}
 	if tip != a.trayTip {
 		a.trayTip = tip
 		a.tray.SetToolTip(tip)
+	}
+	title := ""
+	if a.settings.TraySpeed && runtime.GOOS == "darwin" {
+		var last rate
+		if n := len(a.dash.speeds); n > 0 {
+			last = a.dash.speeds[n-1]
+		}
+		title = traySpeed(last)
+	}
+	if title != a.trayTitle {
+		a.trayTitle = title
+		a.tray.SetTitle(title)
 	}
 }
 

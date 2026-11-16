@@ -85,6 +85,7 @@ type application struct {
 	tray                                *mygo.Tray
 	trayOn                              bool
 	trayTip                             string
+	trayTitle                           string // 菜单栏图标旁的网速，空就是不显示
 	dash                                dashboard
 	update                              updater
 	// 下面这些是控件的跨帧绑定，见 choice

@@ -60,6 +60,7 @@ type Settings struct {
 	AutoConnect   bool
 	Theme         string // "" 跟随系统，"light"，"dark"
 	TrayHinted    bool   `json:",omitempty"` // 第一次关窗口时提示过「还在托盘里」
+	TraySpeed     bool   `json:",omitempty"` // macOS 菜单栏图标旁显示上下行网速
 	// KeepConnections 切节点、切模式时不断开现有连接（默认断开，浏览器马上走新节点）
 	KeepConnections bool `json:",omitempty"`
 	// Delays 上次测速的结果：delayKeys（节点配置）→ 毫秒，-1 超时。早先按内核节点名存的认不出来，下次存时清掉

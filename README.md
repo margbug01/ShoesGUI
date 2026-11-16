@@ -28,7 +28,7 @@ A native Windows and macOS GUI for the shoes proxy core, with subscriptions, lat
 
 **状态不骗人。** 网速曲线（指针放上去能看那一秒的上下行）、本次流量、活动连接、内核内存、真实出口 IP 都在仪表盘上，侧栏底部随时看得到连没连上、用的哪个节点；没接管系统代理时，出口卡会直接告诉你浏览器现在是直连。
 
-**安静地待在托盘。** 关窗口只是收进托盘（macOS 上是顶部菜单栏），右键能连接断开、切节点、切模式；图标灰色是没接管，绿色是接管中。
+**安静地待在托盘。** 关窗口只是收进托盘（macOS 上是顶部菜单栏），右键能连接断开、切节点、切模式；Windows 上图标灰色是没接管，绿色是接管中；macOS 菜单栏里是和其他应用一致的黑白图标，半透明是没接管，还能在右键菜单里打开「在菜单栏显示网速」（固定宽度，不会跟着网速伸缩）。
 
 **看得到每个网站怎么走。** 日志页的「连接记录」像 v2rayN 的连接页，列出每个域名走了直连还是经哪个节点、命中哪条规则（国内域名、国内 IP、局域网、其余）、连了几次、多少流量，能只看代理或只看直连、能搜，右键能复制域名或断开它的连接。记录只放在内存里，退出 MyShoes 就清空。
 
@@ -183,7 +183,7 @@ go build -trimpath -ldflags="-H windowsgui -s -w" -o ../outputs/ShoesGUI.exe .
 
 这样编出来的是开发版，不会自动更新；发给别人用的版本按下面「发版」打包。
 
-exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里，`go build` 和 `mygo build` 都会自动带上。图标母版是 [`docs/icon.svg`](docs/icon.svg)（托盘用的简化版是 `docs/icon-tray-*.svg`），改完导出成 `work/assets/` 下的 PNG，再重新生成 syso：
+exe 的图标、版本信息和 manifest 在 `work/rsrc_windows_amd64.syso` 里，`go build` 和 `mygo build` 都会自动带上。图标母版是 [`docs/icon.svg`](docs/icon.svg)（托盘用的简化版是 `docs/icon-tray-*.svg`；macOS 菜单栏的黑白模板图 `tray-template-*.png` 由 `tray-on.png` 换算：底色转黑、S 镂空，没接管那张整体 40% 不透明），改完导出成 `work/assets/` 下的 PNG，再重新生成 syso：
 
 ```sh
 cd work
