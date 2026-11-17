@@ -76,6 +76,7 @@ type application struct {
 	kernelDraft                         string
 	portDraft                           string
 	kernelError                         string
+	kernelVer, kernelVerFor             string // 内核自己报的版本号，以及这是哪个路径问出来的
 	portError                           string
 	portFocus                           bool           // 上一帧端口输入框有没有焦点，失焦就保存
 	delays                              map[string]int // delayKeys（节点配置）→ 毫秒；0 测速中，-1 超时
@@ -83,9 +84,8 @@ type application struct {
 	quitting                            bool
 	openAtLogin                         bool
 	tray                                *mygo.Tray
-	trayOn                              bool
+	trayKey                             string // 上次画上去的图标内容（接管状态 + 网速），没变就不重画
 	trayTip                             string
-	trayTitle                           string // 菜单栏图标旁的网速，空就是不显示
 	dash                                dashboard
 	update                              updater
 	// 下面这些是控件的跨帧绑定，见 choice

@@ -439,7 +439,11 @@ func (a *application) settingsView(c *ui.Context) {
 		if path == "" {
 			path = "还没找到 " + kernelName
 		}
-		rowWith(c, "Shoes 内核", path, a.kernelError, nil, func() {
+		var below func()
+		if text := a.kernelVersionText(); text != "" {
+			below = func() { ui.Text(c, text).FontSize(12).TextColor(pal(c).muted).LineHeight(1.4) }
+		}
+		rowWith(c, "Shoes 内核", path, a.kernelError, below, func() {
 			if ui.Button(c.Key("browse"), "更改…").Tooltip(kernelHint).Clicked() {
 				paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.window, Title: "选择 " + kernelName, Filters: []mygo.FileFilter{{Name: "可执行文件", Extensions: kernelExtensions}}})
 				if err != nil {

@@ -137,26 +137,39 @@ func (a *application) syncTray() {
 			tip += " · " + node.Name
 		}
 	}
-	if proxy != a.trayOn {
-		a.trayOn = proxy
-		a.tray.SetIcon(trayIcon(proxy))
-	}
 	if tip != a.trayTip {
 		a.trayTip = tip
 		a.tray.SetToolTip(tip)
 	}
+	speed := a.settings.TraySpeed && runtime.GOOS == "darwin"
+	var last rate
+	if n := len(a.dash.speeds); speed && n > 0 {
+		last = a.dash.speeds[n-1]
+	}
+	lines := traySpeedLines(last)
+	key := fmt.Sprint(proxy, speed, lines)
+	if !speed {
+		key = fmt.Sprint(proxy, speed)
+	}
+	if key == a.trayKey {
+		return
+	}
+	a.trayKey = key
+	icon, template := trayIcon(proxy)
 	title := ""
-	if a.settings.TraySpeed && runtime.GOOS == "darwin" {
-		var last rate
-		if n := len(a.dash.speeds); n > 0 {
-			last = a.dash.speeds[n-1]
+	if speed {
+		alpha := uint8(255)
+		if !proxy {
+			alpha = 128 // 没接管时和图标一样半透明
 		}
-		title = traySpeed(last)
+		if img, err := traySpeedIcon(icon, lines, alpha); err == nil {
+			icon = img
+		} else {
+			title = traySpeed(last) // 画不了两行就退回图标旁边一行文字
+		}
 	}
-	if title != a.trayTitle {
-		a.trayTitle = title
-		a.tray.SetTitle(title)
-	}
+	a.tray.SetIcon(icon, template)
+	a.tray.SetTitle(title)
 }
 
 // hintTray 第一次关窗口时用系统通知说一声：窗口不见了不等于退出了
